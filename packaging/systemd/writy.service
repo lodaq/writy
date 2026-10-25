@@ -1,0 +1,18 @@
+[Unit]
+Description=Writy reading and writing assistant
+Documentation=https://github.com/lodaq/writy
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/writy daemon
+Restart=on-failure
+RestartSec=3
+Environment=GDK_BACKEND=wayland
+EnvironmentFile=-%h/.config/writy/environment
+LimitCORE=0
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,52 @@
+# Development package; build in a clean Arch chroot before distribution.
+pkgname=writy-git
+pkgver=0.1.0.r1.ge50359d
+pkgrel=1
+pkgdesc='English-Arabic reading and English writing assistant for Hyprland'
+arch=('x86_64')
+url='https://github.com/lodaq/writy'
+license=('MIT OR Apache-2.0')
+depends=('hyprland' 'gtk4' 'gtk4-layer-shell' 'libxkbcommon' 'at-spi2-core' 'wl-clipboard')
+makedepends=('git' 'rust' 'cmake' 'ninja' 'pkgconf' 'gcc' 'nlohmann-json')
+optdepends=('ollama: local translation and rewriting' 'mpv: local dictionary audio')
+provides=('writy')
+conflicts=('writy')
+source=('writy::git+https://github.com/lodaq/writy.git')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/writy"
+    printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd "$srcdir/writy"
+    cargo fetch --locked
+}
+
+build() {
+    cd "$srcdir/writy"
+    cargo build --release --frozen
+    cmake -S bridge/hyprland -B build/bridge -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
+    cmake --build build/bridge
+}
+
+check() {
+    cd "$srcdir/writy"
+    cargo test --workspace --frozen
+    ctest --test-dir build/bridge --output-on-failure
+}
+
+package() {
+    cd "$srcdir/writy"
+    install -Dm755 target/release/writy "$pkgdir/usr/bin/writy"
+    DESTDIR="$pkgdir" cmake --install build/bridge
+    install -Dm644 packaging/systemd/writy.service "$pkgdir/usr/lib/systemd/user/writy.service"
+    install -Dm644 packaging/config.toml "$pkgdir/usr/share/doc/writy/config.toml"
+    install -Dm644 packaging/hyprland/writy.lua "$pkgdir/usr/share/doc/writy/writy.lua"
+    install -Dm644 packaging/hyprland/writy.conf "$pkgdir/usr/share/doc/writy/writy.conf"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/writy/README.md"
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

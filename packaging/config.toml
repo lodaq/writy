@@ -1,0 +1,30 @@
+# Default configuration. Cloud stays unconfigured until endpoint/model/key are set.
+enabled = true
+offline = false
+selection_popup = true
+
+[typing]
+idle_ms = 300
+min_rephrase_words = 2
+
+[model]
+ollama_url = "http://127.0.0.1:11434"
+rewrite_model = "gemma3:4b"
+translation_model = "translategemma:4b"
+cloud_url = ""
+cloud_model = ""
+api_key_env = "WRITY_API_KEY"
+timeout_secs = 30
+
+[apps]
+blocklist = ["keepass", "bitwarden", "1password", "org.gnome.screensaver"]
+terminals = ["foot", "alacritty", "kitty", "wezterm", "org.gnome.terminal", "com.mitchellh.ghostty"]
+
+[huds]
+translation = true
+definition = true
+examples = true
+collocations = true
+synonyms = true
+word_family = true
+suggestions = true

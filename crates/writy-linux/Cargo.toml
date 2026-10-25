@@ -1,0 +1,22 @@
+[package]
+name = "writy-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "writy"
+path = "src/main.rs"
+
+[dependencies]
+writy-core = { path = "../writy-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+clap = { version = "4", features = ["derive"] }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
+gtk4-layer-shell = "0.8"
+xkbcommon = "0.9"
+libc = "0.2"

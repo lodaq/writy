@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Install Arch toolchain and native dependencies
+        run: >-
+          pacman -Syu --noconfirm --needed git rust cmake ninja pkgconf gcc python
+          hyprland nlohmann-json gtk4 gtk4-layer-shell libxkbcommon at-spi2-core
+      - uses: actions/checkout@v5
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check Rust warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
+      - name: Build application
+        run: cargo build --release --locked
+      - name: Configure native compositor bridge
+        run: >-
+          cmake -S bridge/hyprland -B build/bridge -G Ninja
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          -DCMAKE_INSTALL_LIBDIR=lib
+      - name: Build native compositor bridge
+        run: cmake --build build/bridge
+      - name: Test bridge transport
+        run: ctest --test-dir build/bridge --output-on-failure
+      - name: Check evaluation case balance
+        run: |
+          python - <<'PY'
+          import collections, json
+          from pathlib import Path
+          data = json.loads(Path('tests/fixtures/evaluation.json').read_text())
+          cases = data['cases']
+          assert len(cases) == 50
+          assert collections.Counter(c['category'] for c in cases) == {'reading': 25, 'writing': 25}
+          assert len({c['id'] for c in cases}) == 50
+          PY

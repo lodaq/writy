@@ -1,0 +1,7 @@
+/target
+build/
+.cache/
+**/*.rs.bk
+.env
+
+__pycache__/

@@ -1,0 +1,34 @@
+[
+  {
+    "source": "en",
+    "target": "ar",
+    "text": "I did not approve the changes. Please wait until tomorrow.",
+    "output": "لم أوافق على التغييرات انتظر حتى الغد",
+    "seconds": 0.16,
+    "network_blocked": true
+  },
+  {
+    "source": "ar",
+    "target": "en",
+    "text": "لم أوافق على التغييرات. يرجى الانتظار حتى الغد.",
+    "output": "Please wait till tomorrow.",
+    "seconds": 0.13,
+    "network_blocked": true
+  },
+  {
+    "source": "en",
+    "target": "ar",
+    "text": "My guess: the implementation became too complicated too quickly, and you wanted to reconsider the approach before investing further. The repeated emphasis on “simple code, minimal code, fast app” suggests this, but the repository doesn’t establish the reason.",
+    "output": "تخميني: أن التنفيذ أصبح معقداً جداً بسرعة، وأردت إعادة النظر في النهج قبل مواصلة الاستثمار. ويوحي التأكيد المتكرر على &quot; الشفرة البسيطة، والحد الأدنى من الشفرة، والتطبيق السريع &quot; بذلك، ولكن المستودع لا يحدد السبب.",
+    "seconds": 0.22,
+    "network_blocked": true
+  },
+  {
+    "source": "ar",
+    "target": "en",
+    "text": "أود إعادة النظر في طريقة التنفيذ قبل استثمار المزيد من الوقت. يجب أن يبقى التطبيق بسيطًا وسريعًا.",
+    "output": "I'd like to revisit the method of implementation before investing more time.",
+    "seconds": 0.09,
+    "network_blocked": true
+  }
+]

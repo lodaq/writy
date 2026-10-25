@@ -1,0 +1,18 @@
+[
+  {
+    "source": "ar",
+    "target": "en",
+    "text": "لم أوافق على التغييرات. يرجى الانتظار حتى الغد.",
+    "output": "Please wait till tomorrow.",
+    "seconds": 1.34,
+    "splitter": "default-stanza"
+  },
+  {
+    "source": "ar",
+    "target": "en",
+    "text": "أود إعادة النظر في طريقة التنفيذ قبل استثمار المزيد من الوقت. يجب أن يبقى التطبيق بسيطًا وسريعًا.",
+    "output": "I'd like to revisit the method of implementation before investing more time.",
+    "seconds": 0.09,
+    "splitter": "default-stanza"
+  }
+]

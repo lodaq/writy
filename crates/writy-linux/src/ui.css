@@ -1,0 +1,151 @@
+/* Native, theme-aware materials: solid enough to remain legible without compositor blur. */
+window.writy-main, window.writy-settings { background: @theme_bg_color; }
+.writy-main, .writy-settings, .writy-hud {
+    font-family: system-ui, 'Noto Sans', 'Noto Sans Arabic', sans-serif;
+    font-size: 1em;
+}
+window.writy-hud { background: transparent; }
+.writy-card {
+    background: mix(@theme_bg_color, @theme_base_color, .65);
+    border: 1px solid alpha(@theme_fg_color, .12);
+    border-radius: 14px;
+    padding: 14px 16px;
+}
+.writy-hud .writy-card {
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: mix(@theme_base_color, @theme_bg_color, .2);
+    border-color: alpha(@theme_fg_color, .18);
+    box-shadow: inset 0 1px alpha(@theme_base_color, .65);
+}
+.writy-title {
+    font-weight: 600;
+    font-size: .9em;
+    letter-spacing: .3px;
+    color: @theme_fg_color;
+}
+.writy-body { font-size: 1em; }
+.writy-meta { font-size: .9em; color: alpha(@theme_fg_color, .72); }
+.writy-hud .writy-meta, .writy-hud .writy-title { font-size: .8em; }
+.writy-query { font-size: 1.35em; padding: 12px; border-radius: 12px; }
+.writy-query text { background: @theme_base_color; }
+.writy-input {
+    background: @theme_base_color;
+    border: 1px solid alpha(@theme_fg_color, .16);
+    border-radius: 12px;
+}
+.writy-input:focus-within { border-color: @theme_selected_bg_color; }
+.writy-header { font-size: 2em; font-weight: 700; letter-spacing: -.6px; }
+.writy-status { font-size: .9em; color: alpha(@theme_fg_color, .78); }
+.writy-main button, .writy-settings button, .writy-hud button {
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-weight: 500;
+    box-shadow: none;
+}
+.writy-main button:active, .writy-settings button:active, .writy-hud button:active {
+    background-image: none;
+    background-color: alpha(@theme_selected_bg_color, .24);
+}
+.writy-main button.suggested-action, .writy-settings button.suggested-action {
+    background-image: none;
+    background-color: @theme_selected_bg_color;
+    color: @theme_selected_fg_color;
+}
+.writy-main button.suggested-action:active, .writy-settings button.suggested-action:active {
+    background-color: shade(@theme_selected_bg_color, .85);
+}
+.writy-settings entry, .writy-settings dropdown {
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+.writy-settings checkbutton { padding: 6px 0; }
+.writy-hud button { padding: 3px 8px; font-size: .8em; }
+
+.writy-toolbar {
+    background: mix(@theme_bg_color, @theme_base_color, .4);
+    border-bottom: 1px solid alpha(@theme_fg_color, .08);
+    box-shadow: none;
+}
+.writy-empty { padding: 24px; }
+.writy-empty image { color: alpha(@theme_fg_color, .55); margin-bottom: 8px; }
+.writy-empty-title { font-size: 1.2em; font-weight: 600; letter-spacing: -.2px; }
+.writy-footer {
+    padding: 12px 20px;
+    background: mix(@theme_bg_color, @theme_base_color, .4);
+    border-top: 1px solid alpha(@theme_fg_color, .12);
+}
+.writy-main button:hover, .writy-settings button:hover, .writy-hud button:hover {
+    box-shadow: inset 0 0 0 1px alpha(@theme_fg_color, .15);
+}
+.writy-main button:focus-visible, .writy-settings button:focus-visible,
+.writy-hud button:focus-visible {
+    outline: 2px solid @theme_selected_bg_color;
+    outline-offset: 2px;
+}
+.writy-main button:disabled, .writy-settings button:disabled, .writy-hud button:disabled {
+    opacity: .45;
+}
+.writy-settings expander > title { padding: 8px 0; }
+.writy-settings dropdown button { padding: 6px 10px; }
+.writy-settings checkbutton { min-height: 24px; }
+
+
+/* Compact utility chrome leaves the content as the visual focus. */
+.writy-hud .writy-title { font-size: .85em; letter-spacing: .15px; }
+.writy-hud-icon { color: @theme_selected_bg_color; }
+.writy-hud .writy-body { font-size: 1em; }
+.writy-hud .writy-hud-pending { color: alpha(@theme_fg_color, .65); }
+.writy-hud-header button {
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 6px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    color: alpha(@theme_fg_color, .72);
+}
+.writy-hud-header button image { -gtk-icon-size: 14px; }
+.writy-hud-header button:hover {
+    background: alpha(@theme_selected_bg_color, .12);
+    color: @theme_fg_color;
+    box-shadow: none;
+}
+.writy-hud-header button:active { background: alpha(@theme_selected_bg_color, .24); }
+
+
+/* One reading surface; no per-section viewport or body clipping. */
+.writy-hud-surface {
+    background: mix(@theme_base_color, @theme_bg_color, .2);
+    border: 1px solid alpha(@theme_fg_color, .18);
+    border-radius: 14px;
+    box-shadow: inset 0 1px alpha(@theme_base_color, .4);
+}
+.writy-hud-toolbar {
+    padding: 12px 16px;
+    border-bottom: 1px solid alpha(@theme_fg_color, .12);
+}
+.writy-hud-query { font-size: 1.15em; font-weight: 600; letter-spacing: -.2px; }
+.writy-hud-section { padding: 12px 16px; border-bottom: 1px solid alpha(@theme_fg_color, .09); }
+.writy-hud-section .writy-body { font-size: 1em; }
+.writy-hud-section .writy-meta { font-size: .8em; }
+.writy-hud-footer { padding: 8px 16px; border-top: 1px solid alpha(@theme_fg_color, .09); }
+.writy-hud-header button {
+    min-width: 28px;
+    min-height: 28px;
+    transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.writy-hud-header button:active { transform: scale(.97); }
+.writy-hud-header button:checked { background: alpha(@theme_selected_bg_color, .16); }
+.writy-reduced-motion .writy-hud-header button { transition: none; }
+.writy-reduced-motion .writy-hud-header button:active { transform: none; }
+
+.writy-hud-empty { padding: 8px 16px; }
+.writy-hud-empty .writy-body { font-size: .9em; }
+
+.writy-result-tabs > header > tabs { min-height: 40px; }
+.writy-result-tabs > header > tabs > tab { padding: 8px 12px; }
+
+.writy-hud-tabs > header > tabs > tab { padding: 8px 10px; }
+.writy-hud-tabs > header > tabs > tab label { font-size: .8em; }
