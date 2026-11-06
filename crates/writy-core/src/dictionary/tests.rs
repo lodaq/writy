@@ -304,3 +304,26 @@ fn lookup_keeps_multiple_sources_when_one_has_many_senses() {
             .any(|entry| entry.source.name == "Second dictionary")
     );
 }
+
+#[test]
+fn disabled_sources_stay_installed_but_do_not_supply_results_or_completions() {
+    let dir = TempDir::new().unwrap();
+    let ifo = stardict(dir.path(), &[("decision", "a choice")], &[], "m");
+    let path = dir.path().join("dictionary.sqlite");
+    let mut db = Dictionary::open(&path).unwrap();
+    db.import_stardict(&ifo, Language::English, source())
+        .unwrap();
+    let id = db.source_states().unwrap()[0].id.clone();
+    db.set_source_enabled(&id, false).unwrap();
+    db.import_stardict(&ifo, Language::English, source())
+        .unwrap();
+    drop(db);
+    let db = Dictionary::open(&path).unwrap();
+    assert!(!db.source_states().unwrap()[0].enabled);
+    assert_eq!(db.sources().unwrap()[0].1, 1);
+    assert!(db.lookup("decision").unwrap().is_empty());
+    assert!(db.complete("dec", 3).unwrap().is_empty());
+    db.set_source_enabled(&id, true).unwrap();
+    assert_eq!(db.lookup("decision").unwrap().len(), 1);
+    assert_eq!(db.complete("dec", 3).unwrap(), vec!["decision"]);
+}

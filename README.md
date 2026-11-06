@@ -1,5 +1,7 @@
 # Writy
 
+![Status: Under development](https://img.shields.io/badge/status-under_development-orange)
+
 Writy is a personal English–Arabic reading and writing assistant for
 Arch Linux with Hyprland. It combines dictionary lookup, sentence translation,
 English proofreading, and suggested phrasing in a compact, scrollable HUD with
@@ -9,6 +11,12 @@ This is an initial implementation under active development. Build checks and
 mock-provider tests do not establish that ambient capture, caret placement, or
 replacement work across applications. The isolated GTK/Hyprland fixture has passed live capture, recognized-password exclusion, verified correction, and daemon failure recovery; this does not establish coverage in other applications. The compatibility trial and human
 usefulness evaluation are still pending; see [tasks](tasks/todo.md).
+
+## Desktop workspace
+
+The native GTK interface includes a manual search window, tabbed floating reading/writing panels, and settings for privacy, models, dictionaries, and panel visibility. Dictionary management lists installed sources and supports catalogue downloads and imports. Lookups show source attribution; models and dictionaries are separate installations.
+
+The HUD can switch between compact and fullscreen views. Panel content scrolls independently, and the manual search window provides a focusable path for keyboard use. See [interface design](docs/interface-design.md) for the current behavior and validation procedure.
 
 ## Intended workflow
 

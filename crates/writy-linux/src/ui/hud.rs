@@ -1,28 +1,31 @@
-//! One bounded reading surface: content determines section height, not the viewport.
+//! A draggable reference window with persistent navigation and bounded pages.
 use super::*;
 use std::cell::Cell;
 
 pub(super) struct HudSection {
     pub card: gtk::Box,
+    pub scroll: gtk::ScrolledWindow,
     pub body: gtk::Label,
     pub source: gtk::Label,
     pub copy_text: Rc<RefCell<String>>,
     pub copy: gtk::Button,
 }
 
+struct Placement {
+    bounds: Cell<gdk::Rectangle>,
+    automatic: Cell<(i32, i32)>,
+    manual: Cell<Option<(i32, i32)>>,
+}
+
 pub(super) struct HudStack {
     pub window: gtk::ApplicationWindow,
-    pub scroll: gtk::ScrolledWindow,
     pub tabs: gtk::Notebook,
     pub sections: BTreeMap<&'static str, HudSection>,
     pub expand: gtk::ToggleButton,
     query: gtk::Label,
     status: gtk::Label,
     activity: gtk::Spinner,
-    header: gtk::Box,
-    content: gtk::Box,
-    footer: gtk::Label,
-    monitor_height: Rc<Cell<i32>>,
+    placement: Rc<Placement>,
     query_text: RefCell<String>,
 }
 
@@ -39,25 +42,30 @@ impl HudStack {
             window.set_namespace(Some("writy"));
             window.set_layer(Layer::Overlay);
             window.set_keyboard_mode(KeyboardMode::None);
-            window.set_anchor(Edge::Top, true);
-            window.set_anchor(Edge::Right, true);
             window.set_exclusive_zone(0);
-            window.set_margin(Edge::Right, 20);
         }
+        let placement = Rc::new(Placement {
+            bounds: Cell::new(gdk::Rectangle::new(0, 0, 900, 900)),
+            automatic: Cell::new((440, 16)),
+            manual: Cell::new(None),
+        });
         let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
         surface.add_css_class("writy-hud-surface");
-        let header = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 8);
         header.add_css_class("writy-hud-toolbar");
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         toolbar.add_css_class("writy-hud-header");
         let title = label("Writing assistant", "writy-title");
+        title.set_wrap(false);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title.set_hexpand(true);
+        title.set_tooltip_text(Some("Drag the header to move this panel"));
         toolbar.append(&title);
         let expand = gtk::ToggleButton::new();
         expand.set_icon_name("view-fullscreen-symbolic");
         expand.set_focusable(false);
-        expand.set_tooltip_text(Some("Expand reading area"));
-        expand.update_property(&[gtk::accessible::Property::Label("Expand reading area")]);
+        expand.set_tooltip_text(Some("Fullscreen"));
+        expand.update_property(&[gtk::accessible::Property::Label("Fullscreen")]);
         toolbar.append(&expand);
         for (icon, caption, command) in [
             (
@@ -65,7 +73,7 @@ impl HudStack {
                 "Open in search · Alt+G",
                 Command::Search,
             ),
-            ("window-close-symbolic", "Dismiss panels", Command::Dismiss),
+            ("window-close-symbolic", "Dismiss panel", Command::Dismiss),
         ] {
             let button = gtk::Button::from_icon_name(icon);
             button.set_focusable(false);
@@ -77,8 +85,6 @@ impl HudStack {
         }
         header.append(&toolbar);
         let query = label("", "writy-hud-query");
-        query.set_selectable(true);
-        query.set_focusable(false);
         query.set_wrap(false);
         query.set_ellipsize(gtk::pango::EllipsizeMode::End);
         header.append(&query);
@@ -86,20 +92,23 @@ impl HudStack {
         let activity = gtk::Spinner::new();
         status_row.append(&activity);
         let status = label("", "writy-meta");
+        status.set_wrap(false);
+        status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        status.set_hexpand(true);
         status_row.append(&status);
         header.append(&status_row);
         surface.append(&header);
 
-        let sections_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let tabs = gtk::Notebook::new();
         tabs.add_css_class("writy-hud-tabs");
         tabs.set_scrollable(true);
         tabs.set_show_border(false);
-        sections_box.append(&tabs);
+        tabs.set_vexpand(true);
         let mut sections = BTreeMap::new();
         for (category, title) in CATEGORIES {
-            let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
             card.add_css_class("writy-hud-section");
+            card.set_valign(gtk::Align::Start);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             row.add_css_class("writy-hud-header");
             let heading = label(title, "writy-title");
@@ -115,18 +124,24 @@ impl HudStack {
             body.set_focusable(false);
             body.set_yalign(0.);
             body.set_valign(gtk::Align::Start);
-            body.set_ellipsize(gtk::pango::EllipsizeMode::None);
             card.append(&body);
             let source = label("", "writy-meta");
             source.set_selectable(true);
             source.set_focusable(false);
-            source.set_yalign(0.);
             card.append(&source);
-            tabs.append_page(&card, Some(&gtk::Label::new(Some(title))));
+            let scroll = gtk::ScrolledWindow::builder()
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .vscrollbar_policy(gtk::PolicyType::Automatic)
+                .vexpand(true)
+                .child(&card)
+                .build();
+            scroll.set_overlay_scrolling(false);
+            tabs.append_page(&scroll, Some(&gtk::Label::new(Some(title))));
             sections.insert(
                 category,
                 HudSection {
                     card,
+                    scroll,
                     body,
                     source,
                     copy_text,
@@ -134,34 +149,31 @@ impl HudStack {
                 },
             );
         }
-        let scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .min_content_height(1)
-            .max_content_height(480)
-            .propagate_natural_height(true)
-            .child(&sections_box)
-            .build();
-        let adjustment = scroll.vadjustment();
-        tabs.connect_switch_page(move |_, _, _| adjustment.set_value(0.));
-        scroll.set_overlay_scrolling(false);
-        surface.append(&scroll);
-        let footer = label("Alt+G opens search", "writy-meta");
+        surface.append(&tabs);
+        let footer = label(
+            "Shift + scroll changes section · Alt+G opens search",
+            "writy-meta",
+        );
         footer.add_css_class("writy-hud-footer");
         surface.append(&footer);
-        let weak_footer = footer.downgrade();
-        let adjustment = scroll.vadjustment();
-        adjustment.connect_changed(move |adjustment| {
-            if let Some(footer) = weak_footer.upgrade() {
-                footer.set_text(if adjustment.upper() > adjustment.page_size() + 1. {
-                    "Scroll for more · Alt+G opens search"
-                } else {
-                    "Alt+G opens search"
-                });
+
+        let wheel = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::BOTH_AXES | gtk::EventControllerScrollFlags::DISCRETE,
+        );
+        wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let notebook = tabs.clone();
+        wheel.connect_scroll(move |controller, dx, dy| {
+            if controller
+                .current_event_state()
+                .contains(gdk::ModifierType::SHIFT_MASK)
+            {
+                switch_section(&notebook, if dy != 0. { dy } else { dx });
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
             }
         });
-        // Pointer selection must not become a new PRIMARY lookup or hide the
-        // panel through compositor resets. Keep keyboard input in the editor.
+        surface.add_controller(wheel);
         let motion = gtk::EventControllerMotion::new();
         let enter_tx = tx.clone();
         motion.connect_enter(move |_, _, _| {
@@ -173,50 +185,21 @@ impl HudStack {
         let hidden_tx = tx.clone();
         window.connect_hide(move |_| send(&hidden_tx, Command::HudInteraction { active: false }));
         window.set_child(Some(&surface));
-        let monitor_height = Rc::new(Cell::new(900));
-        let height = monitor_height.clone();
-        let scroller = scroll.clone();
-        let layout_header = header.clone();
-        let layout_footer = footer.clone();
-        let layout_content = sections_box.clone();
-        let weak = window.downgrade();
-        expand.connect_toggled(move |button| {
-            let budget = reading_height(height.get(), button.is_active());
 
-            button.set_icon_name(if button.is_active() {
+        let weak = window.downgrade();
+        let layout = placement.clone();
+        expand.connect_toggled(move |button| {
+            let full = button.is_active();
+            let caption = if full { "Restore panel" } else { "Fullscreen" };
+            button.set_icon_name(if full {
                 "view-restore-symbolic"
             } else {
                 "view-fullscreen-symbolic"
             });
-            button.update_property(&[gtk::accessible::Property::Label(if button.is_active() {
-                "Compact reading area"
-            } else {
-                "Expand reading area"
-            })]);
-            button.set_tooltip_text(Some(if button.is_active() {
-                "Compact reading area"
-            } else {
-                "Expand reading area"
-            }));
+            button.set_tooltip_text(Some(caption));
+            button.update_property(&[gtk::accessible::Property::Label(caption)]);
             if let Some(window) = weak.upgrade() {
-                fit_reading_area(
-                    &window,
-                    &scroller,
-                    &layout_header,
-                    &layout_footer,
-                    &layout_content,
-                    window.default_width(),
-                    budget,
-                );
-                // Expansion grows downward from the same edge, within the monitor.
-                if layer_shell_supported() {
-                    window.set_margin(
-                        Edge::Top,
-                        window
-                            .margin(Edge::Top)
-                            .clamp(8, (height.get() - budget - 8).max(8)),
-                    );
-                }
+                apply_geometry(&window, &layout, full);
             }
         });
         if let Some(settings) = gtk::Settings::default() {
@@ -234,21 +217,27 @@ impl HudStack {
                 }
             });
         }
+        install_drag(&header, &window, &expand, placement.clone());
         Self {
             window,
-            scroll,
-            sections,
             tabs,
+            sections,
             expand,
             query,
             status,
             activity,
-            header,
-            content: sections_box,
-            footer,
-            monitor_height,
+            placement,
             query_text: RefCell::new(String::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub fn scroll(&self) -> gtk::ScrolledWindow {
+        self.tabs
+            .nth_page(self.tabs.current_page())
+            .unwrap()
+            .downcast()
+            .unwrap()
     }
 
     pub fn update(
@@ -262,11 +251,11 @@ impl HudStack {
         for (key, section) in &self.sections {
             let panel = panels
                 .iter()
-                .find(|panel| panel.category == *key)
+                .find(|p| p.category == *key)
                 .filter(|_| config.huds.get(*key).copied().unwrap_or(true));
+            section.scroll.set_visible(panel.is_some());
             section.card.set_visible(panel.is_some());
             if let Some(panel) = panel {
-                // Background refreshes must not clear a user's text selection.
                 if let Some(markup) = &panel.markup {
                     if section.body.label().as_str() != markup {
                         section.body.set_markup(markup);
@@ -275,114 +264,208 @@ impl HudStack {
                     section.body.set_text(&panel.body);
                 }
                 if panel.copy_text.is_empty() {
-                    section.card.add_css_class("writy-hud-empty");
                     section.body.add_css_class("writy-hud-pending");
                 } else {
-                    section.card.remove_css_class("writy-hud-empty");
                     section.body.remove_css_class("writy-hud-pending");
                 }
-                section.source.set_text(&panel.source);
+                if section.source.text().as_str() != panel.source {
+                    section.source.set_text(&panel.source);
+                }
                 section.source.set_visible(!panel.source.is_empty());
                 *section.copy_text.borrow_mut() = panel.copy_text.clone();
                 section.copy.set_sensitive(!panel.copy_text.is_empty());
             }
         }
-        if self.tabs.current_page().is_none() {
-            self.tabs.set_current_page(Some(0));
-        }
-        let visible = self
-            .sections
-            .values()
-            .any(|section| section.card.get_visible());
-        if !visible {
+        if !self.sections.values().any(|s| s.card.get_visible()) {
             self.window.set_visible(false);
             return;
         }
+        if self.tabs.current_page().is_none_or(|page| {
+            self.tabs
+                .nth_page(Some(page))
+                .is_none_or(|w| !w.get_visible())
+        }) {
+            switch_section(&self.tabs, 1.);
+        }
         if *self.query_text.borrow() != result.snapshot.text {
-            self.scroll.vadjustment().set_value(0.);
+            for section in self.sections.values() {
+                section.scroll.vadjustment().set_value(0.);
+            }
+            self.query.set_text(&result.snapshot.text);
             *self.query_text.borrow_mut() = result.snapshot.text.clone();
         }
-        self.query.set_text(&result.snapshot.text);
         self.query.set_tooltip_text(Some(&result.snapshot.text));
-        self.status.set_text(if result.status.is_empty() {
-            if result.writing {
-                "While you write"
-            } else {
-                "Dictionary lookup"
-            }
-        } else {
+        self.status.set_text(if !result.status.is_empty() {
             &result.status
+        } else if result.writing {
+            "While you write"
+        } else {
+            "Dictionary lookup"
         });
         self.activity.set_spinning(result.status == "Generating…");
         self.activity.set_visible(result.status == "Generating…");
-        self.monitor_height.set(bounds.height());
-        let width = (bounds.width() - 40).clamp(240, 440);
-        let budget = reading_height(bounds.height(), self.expand.is_active());
-        fit_reading_area(
-            &self.window,
-            &self.scroll,
-            &self.header,
-            &self.footer,
-            &self.content,
-            width,
-            budget,
-        );
-        if layer_shell_supported() {
-            if let Some(monitor) = monitor {
-                self.window.set_monitor(Some(monitor));
-            }
-            if !result.writing
-                && let Some((x, y, _, _)) = result.caret
-            {
-                let (left, top) =
-                    pointer_placement((x, y), bounds, width, self.window.default_height());
-                self.window.set_anchor(Edge::Right, false);
-                self.window.set_anchor(Edge::Left, true);
-                self.window.set_margin(Edge::Left, left);
-                self.window.set_margin(Edge::Top, top);
-            } else {
-                self.window.set_anchor(Edge::Left, false);
-                self.window.set_anchor(Edge::Right, true);
-                let candidate = result
-                    .caret
-                    .map(|(_, y, _, h)| y - bounds.y() + h + 12)
-                    .unwrap_or(16);
-                let top = if candidate + budget <= bounds.height() {
-                    candidate
+        self.placement.bounds.set(bounds);
+        let (width, height) = compact_size(bounds);
+        let automatic = if !result.writing
+            && let Some((x, y, _, _)) = result.caret
+        {
+            pointer_placement((x, y), bounds, width, height)
+        } else {
+            let top = result
+                .caret
+                .map(|(_, y, _, h)| y - bounds.y() + h + 12)
+                .unwrap_or(16);
+            (
+                bounds.width() - width - 20,
+                if top + height <= bounds.height() {
+                    top
                 } else {
                     16
-                };
-                self.window.set_margin(
-                    Edge::Top,
-                    top.clamp(0, (bounds.height() - budget - 8).max(0)),
-                );
-            }
+                },
+            )
+        };
+        self.placement.automatic.set(automatic);
+        if layer_shell_supported()
+            && let Some(monitor) = monitor
+        {
+            self.window.set_monitor(Some(monitor));
         }
+        apply_geometry(&self.window, &self.placement, self.expand.is_active());
         self.window.set_visible(true);
     }
 }
 
-fn fit_reading_area(
-    window: &gtk::ApplicationWindow,
-    scroll: &gtk::ScrolledWindow,
-    header: &gtk::Box,
-    footer: &gtk::Label,
-    content: &gtk::Box,
-    width: i32,
-    budget: i32,
-) {
-    let chrome = header.measure(gtk::Orientation::Vertical, width).0
-        + footer.measure(gtk::Orientation::Vertical, width).0
-        + 4;
-    let cap = (budget - chrome).max(48);
-    let natural = content.measure(gtk::Orientation::Vertical, width - 16).1;
-    let visible_content = natural.clamp(1, cap);
-    scroll.set_min_content_height(1);
-    scroll.set_max_content_height(cap);
-    scroll.set_min_content_height(visible_content);
-    window.set_default_size(width, chrome + visible_content);
+fn compact_size(bounds: gdk::Rectangle) -> (i32, i32) {
+    (
+        (bounds.width() - 40).clamp(240, 440),
+        reading_height(bounds.height(), false),
+    )
 }
 
+fn apply_geometry(window: &gtk::ApplicationWindow, placement: &Placement, full: bool) {
+    let bounds = placement.bounds.get();
+    let (width, height) = if full {
+        (bounds.width(), bounds.height())
+    } else {
+        compact_size(bounds)
+    };
+    window.set_default_size(width, height);
+    if full {
+        window.add_css_class("writy-hud-fullscreen");
+    } else {
+        window.remove_css_class("writy-hud-fullscreen");
+    }
+    if layer_shell_supported() {
+        for edge in [Edge::Top, Edge::Left] {
+            window.set_anchor(edge, true);
+        }
+        for edge in [Edge::Bottom, Edge::Right] {
+            window.set_anchor(edge, full);
+            window.set_margin(edge, 0);
+        }
+        let (x, y) = if full {
+            (0, 0)
+        } else {
+            clamp_position(
+                placement.manual.get().unwrap_or(placement.automatic.get()),
+                bounds,
+                width,
+                height,
+            )
+        };
+        window.set_margin(Edge::Left, x);
+        window.set_margin(Edge::Top, y);
+    } else if full {
+        window.fullscreen();
+    } else {
+        window.unfullscreen();
+    }
+}
+
+fn clamp_position(
+    (x, y): (i32, i32),
+    bounds: gdk::Rectangle,
+    width: i32,
+    height: i32,
+) -> (i32, i32) {
+    (
+        x.clamp(0, (bounds.width() - width).max(0)),
+        y.clamp(0, (bounds.height() - height).max(0)),
+    )
+}
+
+fn install_drag(
+    header: &gtk::Box,
+    window: &gtk::ApplicationWindow,
+    expand: &gtk::ToggleButton,
+    placement: Rc<Placement>,
+) {
+    header.set_cursor_from_name(Some("grab"));
+    let drag = gtk::GestureDrag::new();
+    drag.set_button(1);
+    let origin = Rc::new(Cell::new((0, 0)));
+    let start = origin.clone();
+    let weak = window.downgrade();
+    let full = expand.clone();
+    drag.connect_drag_begin(move |gesture, x, y| {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let mut picked = gesture
+            .widget()
+            .and_then(|w| w.pick(x, y, gtk::PickFlags::DEFAULT));
+        while let Some(widget) = picked {
+            if widget.is::<gtk::Button>() {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
+            picked = widget.parent();
+        }
+        if full.is_active() {
+            gesture.set_state(gtk::EventSequenceState::Denied);
+            return;
+        }
+        if layer_shell_supported() {
+            start.set((window.margin(Edge::Left), window.margin(Edge::Top)));
+        }
+        if !layer_shell_supported()
+            && let Some(event) = gesture.current_event()
+            && let Some(device) = event.device()
+            && let Some(surface) = window.surface().and_downcast::<gdk::Toplevel>()
+        {
+            surface.begin_move(&device, 1, x, y, event.time());
+        }
+    });
+    let weak = window.downgrade();
+    let full = expand.clone();
+    drag.connect_drag_update(move |_, dx, dy| {
+        if full.is_active() || !layer_shell_supported() {
+            return;
+        }
+        if let Some(window) = weak.upgrade() {
+            let (x, y) = origin.get();
+            placement.manual.set(Some((x + dx as i32, y + dy as i32)));
+            apply_geometry(&window, &placement, false);
+        }
+    });
+    header.add_controller(drag);
+}
+
+pub(super) fn switch_section(tabs: &gtk::Notebook, delta: f64) {
+    if delta == 0. {
+        return;
+    }
+    let count = tabs.n_pages() as i32;
+    let current = tabs.current_page().unwrap_or(0) as i32;
+    let step = if delta > 0. { 1 } else { -1 };
+    for offset in 1..=count {
+        let page = (current + step * offset).rem_euclid(count) as u32;
+        if tabs.nth_page(Some(page)).is_some_and(|w| w.is_visible()) {
+            tabs.set_current_page(Some(page));
+            break;
+        }
+    }
+}
 fn pointer_placement(
     pointer: (i32, i32),
     bounds: gdk::Rectangle,

@@ -36,8 +36,17 @@ assistance is unconfigured. Local generation requires Ollama to be running.
 
 The floating writing assistant has scrollable section tabs (Translation, Writing,
 Definition, Collocations, Examples, Synonyms & antonyms, and Word family).
-Use the tab-strip arrows to reach additional sections. Drag across result text
-to select it; Arabic content is aligned to the right.
+Use the tab-strip arrows or Shift + scroll up/down to change sections. Each tab
+has a fixed scroll area and retains its reading position. Drag the header to move
+the panel; its position persists for the session. The fullscreen button fills the
+current monitor and restores the compact panel on the next click. Drag across
+result text to select it; Arabic content is aligned to the right.
+
+Settings lists the supported dictionary catalogue and all imported dictionaries.
+Installed sources show Enabled or Disabled and an entry count. Switches save
+immediately and affect both lookups and completions without deleting the data.
+FreeDict packs have Install buttons; other catalogue entries link to their source
+and state the required import format. Refresh reloads installation status.
 
 Useful commands:
 

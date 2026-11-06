@@ -14,23 +14,62 @@ pub use packs::{OpenPack, download_open_pack};
 pub(crate) const MAX_ENTRY_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_ENTRIES: usize = 2_000_000;
 
+pub struct DictionarySource {
+    pub id: String,
+    pub attribution: Attribution,
+    pub entries: usize,
+    pub enabled: bool,
+}
+
 pub struct Dictionary {
     connection: Connection,
 }
 
 impl Dictionary {
     pub fn sources(&self) -> Result<Vec<(Attribution, usize)>> {
+        Ok(self
+            .source_states()?
+            .into_iter()
+            .map(|s| (s.attribution, s.entries))
+            .collect())
+    }
+    pub fn source_states(&self) -> Result<Vec<DictionarySource>> {
         let mut statement = self.connection.prepare(
-            "SELECT payload, COUNT(*) FROM lexical_entries GROUP BY source_key ORDER BY source_key",
+            "SELECT e.source_key, e.payload, COUNT(*), COALESCE(p.enabled, 1)
+             FROM lexical_entries e LEFT JOIN dictionary_preferences p ON p.source_key=e.source_key
+             GROUP BY e.source_key ORDER BY e.source_key",
         )?;
-        let rows =
-            statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))?;
+        let rows = statement.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, usize>(2)?,
+                r.get::<_, bool>(3)?,
+            ))
+        })?;
         rows.map(|r| {
-            let (payload, count) = r?;
+            let (id, payload, entries, enabled) = r?;
             let entry: LexicalEntry = serde_json::from_str(&payload)?;
-            Ok((entry.source, count))
+            Ok(DictionarySource {
+                id,
+                attribution: entry.source,
+                entries,
+                enabled,
+            })
         })
         .collect()
+    }
+    pub fn set_source_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        ensure!(
+            self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM lexical_entries WHERE source_key=?1)",
+                [id],
+                |r| r.get::<_, bool>(0)
+            )?,
+            "Dictionary source is not installed"
+        );
+        self.connection.execute("INSERT INTO dictionary_preferences(source_key, enabled) VALUES (?1, ?2) ON CONFLICT(source_key) DO UPDATE SET enabled=excluded.enabled", params![id, enabled])?;
+        Ok(())
     }
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -44,6 +83,7 @@ impl Dictionary {
             CREATE TABLE IF NOT EXISTS lexical_entries (
                 id INTEGER PRIMARY KEY, source_key TEXT NOT NULL, headword TEXT NOT NULL, payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dictionary_preferences (source_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)));
             CREATE INDEX IF NOT EXISTS lexical_sources ON lexical_entries(source_key);
             CREATE TABLE IF NOT EXISTS lexical_aliases (
                 alias TEXT NOT NULL, entry_id INTEGER NOT NULL REFERENCES lexical_entries(id) ON DELETE CASCADE,
@@ -58,7 +98,7 @@ impl Dictionary {
         if key.is_empty() || key.len() > 4096 {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare("SELECT e.payload FROM lexical_aliases a JOIN lexical_entries e ON e.id=a.entry_id WHERE a.alias=?1 ORDER BY ROW_NUMBER() OVER (PARTITION BY e.source_key ORDER BY e.id), e.id LIMIT 50")?;
+        let mut statement = self.connection.prepare("SELECT e.payload FROM lexical_aliases a JOIN lexical_entries e ON e.id=a.entry_id WHERE a.alias=?1 AND NOT EXISTS (SELECT 1 FROM dictionary_preferences p WHERE p.source_key=e.source_key AND p.enabled=0) ORDER BY ROW_NUMBER() OVER (PARTITION BY e.source_key ORDER BY e.id), e.id LIMIT 50")?;
         let rows = statement.query_map([key], |row| row.get::<_, String>(0))?;
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
@@ -69,7 +109,7 @@ impl Dictionary {
             return Ok(Vec::new());
         }
         let end = format!("{prefix}\u{10ffff}");
-        let mut statement = self.connection.prepare("SELECT DISTINCT e.headword FROM lexical_aliases a JOIN lexical_entries e ON e.id=a.entry_id WHERE a.alias>=?1 AND a.alias<?2 ORDER BY e.headword LIMIT ?3")?;
+        let mut statement = self.connection.prepare("SELECT DISTINCT e.headword FROM lexical_aliases a JOIN lexical_entries e ON e.id=a.entry_id WHERE a.alias>=?1 AND a.alias<?2 AND NOT EXISTS (SELECT 1 FROM dictionary_preferences p WHERE p.source_key=e.source_key AND p.enabled=0) ORDER BY e.headword LIMIT ?3")?;
         let rows = statement.query_map(params![prefix, end, limit.min(100)], |row| row.get(0))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }

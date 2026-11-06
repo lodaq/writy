@@ -28,7 +28,10 @@ impl View {
         let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let toolbar = gtk::HeaderBar::new();
         toolbar.add_css_class("writy-toolbar");
-        toolbar.set_title_widget(Some(&label("Settings", "writy-title")));
+        let title = gtk::Label::new(Some("Settings"));
+        title.add_css_class("writy-title");
+        title.set_wrap(false);
+        toolbar.set_title_widget(Some(&title));
         window.set_titlebar(Some(&toolbar));
         let (privacy_section, privacy) = section(
             "Privacy & lookup",
@@ -191,46 +194,17 @@ impl View {
             "English ↔ Arabic lookups, available without a network after installation.",
         );
         root.append(&dictionary_section);
-        let install = gtk::Button::with_label("Install English ↔ Arabic dictionaries");
-        let msg = message.clone();
-        install.connect_clicked(move |button| {
-            let result = std::env::current_exe().and_then(|exe| {
-                std::process::Command::new(exe)
-                    .args(["dict", "install"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-            });
-            match result {
-                Ok(mut child) => {
-                    button.set_sensitive(false);
-                    msg.set_text("Downloading attributed FreeDict packs…");
-                    let msg = msg.clone();
-                    let b = button.clone();
-                    glib::timeout_add_local(Duration::from_millis(500), move || {
-                        match child.try_wait() {
-                            Ok(Some(s)) => {
-                                b.set_sensitive(true);
-                                msg.set_text(if s.success() {
-                                    "Dictionaries installed. Try a lookup."
-                                } else {
-                                    "Install failed. Run `writy dict install` for details."
-                                });
-                                glib::ControlFlow::Break
-                            }
-                            Ok(None) => glib::ControlFlow::Continue,
-                            Err(_) => {
-                                b.set_sensitive(true);
-                                msg.set_text("Could not check installation. Try again.");
-                                glib::ControlFlow::Break
-                            }
-                        }
-                    });
-                }
-                Err(_) => msg.set_text("Cannot start dictionary installer"),
-            }
+        let catalogue = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        dictionaries.append(&catalogue);
+        super::dictionaries::populate(&catalogue, &self.tx, &message);
+        let refresh_dictionaries = gtk::Button::with_label("Refresh dictionary status");
+        let list = catalogue.clone();
+        let dictionary_tx = self.tx.clone();
+        let dictionary_message = message.clone();
+        refresh_dictionaries.connect_clicked(move |_| {
+            super::dictionaries::populate(&list, &dictionary_tx, &dictionary_message)
         });
-        dictionaries.append(&install);
+        dictionaries.append(&refresh_dictionaries);
         let save = gtk::Button::with_label("Save settings");
         save.add_css_class("suggested-action");
         let tx = self.tx.clone();

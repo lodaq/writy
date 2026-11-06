@@ -18,6 +18,7 @@ use std::{
 use writy_core::{config::Config, types::SuggestionKind};
 
 mod components;
+mod dictionaries;
 mod hud;
 mod settings;
 use components::{copy_button, empty_state, result_card, section};

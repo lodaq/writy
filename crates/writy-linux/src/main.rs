@@ -249,10 +249,16 @@ async fn dictionary_action(action: DictAction) -> Result<()> {
     ipc::ensure_parent(&path)?;
     match action {
         DictAction::List => {
-            for (source, count) in Dictionary::open(path)?.sources()? {
+            for state in Dictionary::open(path)?.source_states()? {
+                let source = state.attribution;
+                let count = state.entries;
                 println!(
-                    "{}\t{} entries\t{}\t{}",
-                    source.name, count, source.license, source.url
+                    "{}\t{} entries\t{}\t{}\t{}",
+                    source.name,
+                    count,
+                    if state.enabled { "enabled" } else { "disabled" },
+                    source.license,
+                    source.url
                 );
             }
         }

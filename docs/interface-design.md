@@ -12,13 +12,14 @@ navigation. The intended feeling is calm, immediate and predictable.
 - Results: category and copy action share a header; readable selectable content
   follows, then attribution. Copy confirmation stays on the control that caused it.
   Status messages are never offered as copyable writing suggestions.
-- Floating panels: seven logical categories share one bounded, scrollable
-  reading surface. Bodies wrap and take their natural height; no body is ellipsized
-  or constrained to a strip. There is one visible scrollbar, persistent shared
-  Open/Expand/Dismiss controls, and a Copy action per section. Attribution remains
-  below each body. Updates to the same query retain the reading position.
-  The compact area uses up to 72% of monitor height (maximum 680 logical pixels);
-  Expand uses the monitor minus 48 pixels. Short results size to their content.
+- Floating panels: seven logical categories use tabs in a fixed-size reading
+  surface. Each page scrolls independently while the draggable header, tab strip
+  and footer stay visible. Shift + scroll cycles through enabled sections.
+  Bodies wrap without truncation; each page has Copy and source attribution.
+  Updates to the same query retain reading positions and text selections.
+  The compact area uses 72% of monitor height (maximum 680 logical pixels);
+  fullscreen fills the current monitor. Restore returns to the compact size and
+  manually selected position.
   The surface never takes keyboard focus; Alt+G provides a keyboard-accessible
   search view. Non-editing screenshot keys and temporary focus/shortcut resets
   retain displayed reference text while the backend invalidates correction

@@ -49,11 +49,12 @@ between the final read and write remains a limitation to test in the trial.
 ## HUD and focus ownership
 
 The seven independently configurable categories share one layer-shell reading
-surface. Each section wraps naturally; one outer scroller makes all content
-reachable without fixed-height strips. The default viewport uses up to 72% of
-output height, capped at 680 logical pixels. Expanded reading uses the output
-height minus 48 pixels; placement remains clamped to that output. The shared
-toolbar and footer stay outside the scroll area. Use native GTK text/image widgets
+surface. A persistent tab strip selects independently scrolling pages inside a
+fixed viewport. Shift + scroll cycles through enabled pages. The default window
+uses 72% of output height, capped at 680 logical pixels; fullscreen uses the entire
+output. Header dragging stores a session position, clamped to the current output,
+and fullscreen restore retains that position. The shared toolbar, tabs and footer
+stay outside each page's scroll area. Use native GTK text/image widgets
 and sanitized dictionary formatting rather than a web engine. Treat local media
 paths as untrusted dictionary input.
 
@@ -93,3 +94,9 @@ configured word threshold is met. Superseded work is cancelled and every respons
 still requires its original snapshot. Generated categories fill only gaps in
 dictionary evidence and carry visible AI labels; they are not persisted. Empty
 or inapplicable categories keep an explicit visible state in insert mode.
+
+Dictionary source preferences live in the lexical database, keyed by the stable
+source identity. Disabled sources remain installed but are excluded before result
+and completion limits are applied. Reimporting a source preserves its preference.
+Settings combines a curated install/import catalogue with every installed source;
+source switches save immediately and invalidate already displayed results.

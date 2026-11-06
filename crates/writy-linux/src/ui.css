@@ -149,3 +149,12 @@ window.writy-hud { background: transparent; }
 
 .writy-hud-tabs > header > tabs > tab { padding: 8px 10px; }
 .writy-hud-tabs > header > tabs > tab label { font-size: .8em; }
+
+.writy-hud-toolbar { padding: 14px 16px 12px; }
+.writy-hud-header button { min-width: 32px; min-height: 32px; border-radius: 8px; }
+.writy-hud-header button:hover { background: alpha(@theme_fg_color, .1); }
+.writy-hud-query { font-size: 1.25em; }
+.writy-hud-tabs > header { background: alpha(@theme_fg_color, .035); }
+.writy-hud-fullscreen .writy-hud-surface { border-radius: 0; border-width: 0; }
+.writy-dictionary-row { padding: 12px 0; border-bottom: 1px solid alpha(@theme_fg_color, .1); }
+.writy-dictionary-state { font-size: .85em; color: alpha(@theme_fg_color, .8); }

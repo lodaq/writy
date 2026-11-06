@@ -179,6 +179,17 @@ fn native_component_gallery() {
         .filter(|w| w.has_css_class("writy-settings"))
         .collect();
     assert_eq!(settings.len(), 1);
+    let titlebar = settings[0]
+        .titlebar()
+        .unwrap()
+        .downcast::<gtk::HeaderBar>()
+        .unwrap();
+    let title = titlebar
+        .title_widget()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert!(!title.wraps(), "Settings title must remain on one line");
     snapshot(&settings[0], "settings");
     let shell = settings[0].child().unwrap().downcast::<gtk::Box>().unwrap();
     let scroll = shell
@@ -190,6 +201,53 @@ fn native_component_gallery() {
     adjustment.set_value(adjustment.upper() - adjustment.page_size());
     snapshot(&settings[0], "settings-panels");
     settings[0].set_visible(false);
+    // Exercise every dictionary state without reading or modifying user data.
+    {
+        use writy_core::dictionary::DictionarySource;
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let message = label("", "writy-status");
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let sources = [true, false]
+            .into_iter()
+            .map(|enabled| DictionarySource {
+                id: format!("fixture-{enabled}"),
+                attribution: Attribution {
+                    name: format!("Custom fixture {enabled}"),
+                    url: String::new(),
+                    license: "CC0".into(),
+                },
+                entries: 1,
+                enabled,
+            })
+            .collect::<Vec<_>>();
+        dictionaries::render(&list, &tx, &message, &sources);
+        fn labels(widget: &gtk::Widget, output: &mut String) {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                output.push_str(&label.text());
+                output.push('\n');
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                labels(&widget, output);
+                child = widget.next_sibling();
+            }
+        }
+        let mut text = String::new();
+        labels(list.upcast_ref(), &mut text);
+        assert!(text.contains("Not installed"));
+        assert!(text.contains("Installed · Enabled · 1 entries"));
+        assert!(text.contains("Installed · Disabled · 1 entries"));
+        let preview = gtk::ApplicationWindow::builder()
+            .application(&app)
+            .title("Dictionary catalogue")
+            .default_width(620)
+            .default_height(640)
+            .build();
+        preview.add_css_class("writy-settings");
+        preview.set_child(Some(&gtk::ScrolledWindow::builder().child(&list).build()));
+        snapshot(&preview, "dictionary-catalogue");
+        preview.close();
+    }
     // All floating components use the same synthetic dictionary fixture.
     search.set_visible(false);
     view.borrow_mut().show(Results {
@@ -228,6 +286,45 @@ fn native_component_gallery() {
             "body allocation must include every line"
         );
     }
+    {
+        let tabs = view.borrow().hud.tabs.clone();
+        tabs.set_current_page(Some(0));
+        hud::switch_section(&tabs, -1.);
+        assert_eq!(tabs.current_page(), Some(6));
+        hud::switch_section(&tabs, 1.);
+        assert_eq!(tabs.current_page(), Some(0));
+        view.borrow().hud.sections["suggestions"]
+            .scroll
+            .set_visible(false);
+        hud::switch_section(&tabs, 1.);
+        assert_eq!(tabs.current_page(), Some(2), "Skip disabled sections");
+        view.borrow().hud.sections["suggestions"]
+            .scroll
+            .set_visible(true);
+    }
+    if layer_shell_supported() {
+        let surface = hud_window.child().unwrap();
+        let header = surface.first_child().unwrap();
+        let controllers = header.observe_controllers();
+        let drag = (0..controllers.n_items())
+            .find_map(|i| controllers.item(i).and_downcast::<gtk::GestureDrag>())
+            .unwrap();
+        let before = (hud_window.margin(Edge::Left), hud_window.margin(Edge::Top));
+        drag.emit_by_name::<()>("drag-begin", &[&20f64, &20f64]);
+        drag.emit_by_name::<()>("drag-update", &[&-40f64, &24f64]);
+        let moved = (hud_window.margin(Edge::Left), hud_window.margin(Edge::Top));
+        assert_ne!(before, moved, "Header dragging must move the panel");
+        view.borrow_mut().show(Results {
+            writing: true,
+            ..result.clone()
+        });
+        assert_eq!(
+            moved,
+            (hud_window.margin(Edge::Left), hud_window.margin(Edge::Top)),
+            "Refresh must preserve manual placement"
+        );
+        snapshot(&hud_window, "hud-dragged");
+    }
     view.borrow().hud.tabs.set_current_page(Some(4));
     settle();
     snapshot(&hud_window, "hud-examples-tab");
@@ -250,7 +347,8 @@ fn native_component_gallery() {
             .selection_bounds(),
         Some((0, 8))
     );
-    let adjustment = view.borrow().hud.scroll.vadjustment();
+    let fixed_height = hud_window.height();
+    let adjustment = view.borrow().hud.scroll().vadjustment();
     assert!(
         adjustment.upper() > adjustment.page_size(),
         "long content needs scrolling"
@@ -258,6 +356,11 @@ fn native_component_gallery() {
     adjustment.set_value(adjustment.upper() - adjustment.page_size());
     snapshot(&hud_window, "hud-reading-bottom");
     assert!(adjustment.value() > 0.);
+    assert_eq!(
+        hud_window.height(),
+        fixed_height,
+        "Scrolling must not resize the panel"
+    );
     let previous_scroll = adjustment.value();
     view.borrow_mut().show(Results {
         writing: true,
@@ -274,6 +377,18 @@ fn native_component_gallery() {
     );
     view.borrow().hud.expand.set_active(true);
     snapshot(&hud_window, "hud-reading-expanded");
+    if layer_shell_supported() {
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            assert!(hud_window.is_anchor(edge));
+            assert_eq!(hud_window.margin(edge), 0);
+        }
+        let bounds = view.borrow().layout_bounds.unwrap();
+        assert_eq!(
+            (hud_window.width(), hud_window.height()),
+            (bounds.2, bounds.3),
+            "Fullscreen must fill the entire monitor"
+        );
+    }
     view.borrow().hud.expand.set_active(false);
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_enable_animations(false);
