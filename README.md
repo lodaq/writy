@@ -10,7 +10,7 @@ dedicated sections.
 This is an initial implementation under active development. Build checks and
 mock-provider tests do not establish that ambient capture, caret placement, or
 replacement work across applications. The isolated GTK/Hyprland fixture has passed live capture, recognized-password exclusion, verified correction, and daemon failure recovery; this does not establish coverage in other applications. The compatibility trial and human
-usefulness evaluation are still pending; see [tasks](tasks/todo.md).
+usefulness evaluation are still pending; see [checklist](docs/checklist.md).
 
 ## Desktop workspace
 
@@ -152,7 +152,7 @@ system, configured model service, or cloud provider never retains data.
 - [Local desktop setup](docs/desktop-setup.md): installed paths, shortcuts, updates, and undo.
 - [Product specification](docs/spec.md): workflows, boundaries, and acceptance.
 - [Architecture](docs/architecture.md): engine, providers, Linux adapter, and HUDs.
-- [Implementation and trial checklist](tasks/todo.md): remaining work and proof.
+- [Implementation and trial checklist](docs/checklist.md): remaining work and proof.
 - [Research](docs/research.md): primary sources and claims needing measurement.
 - [Glossary](GLOSSARY.md) and [decision records](docs/adr/).
 - [Original design notes](docs/archive/design-notes.md): preserved historical

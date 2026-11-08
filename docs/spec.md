@@ -1,7 +1,7 @@
 # Product specification
 
 Status: accepted direction for the initial personal app; implementation and
-runtime validation are tracked separately in [tasks](../tasks/README.md).
+runtime validation are tracked separately in [checklist](checklist.md).
 
 ## Goal and audience
 
