@@ -47,3 +47,10 @@ be verified. Assistance in opaque input is best effort and may be disabled.
 
 **Generation**: A version identifying the text and focus context of a request.
 Results from older generations must not replace current results or text.
+
+**Dictionary library**: The installed dictionary sources and their downloaded
+files, including the choices to install, enable, disable, or remove a source.
+
+**Reading result**: Source-attributed lexical information, translations, and
+related status shown for a reading request; displayed text and copied text may
+differ in formatting.

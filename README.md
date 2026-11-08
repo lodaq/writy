@@ -87,6 +87,22 @@ writy dict install --help
 writy dict import --help
 ```
 
+For GUI dictionary setup, open **Settings → Dictionary library**. **Explore**
+lists eight sources: both FreeDict directions, English and Arabic Wiktionary,
+Open English WordNet, Arramooz Alwaseet, GNU GCIDE, and Princeton WordNet.
+Click **Download** once to download, extract, convert, and import in the background.
+Downloaded sources appear in **Downloaded**, with persistent on/off switches.
+Explore keeps them visible with Download disabled and **Remove** available;
+Remove deletes installed entries and Writy's cached download. Switching off keeps
+the data. GCIDE includes historical usage; Princeton WordNet overlaps OEWN.
+Python 3 is included in the Arch package dependencies. Local-file imports remain
+available through `writy dict import`.
+
+The expanded library performs a one-time reset of prior dictionary entries,
+preferences, and Writy-managed pack files, including custom imports. Download
+sources again from Explore. Application settings and original import files
+outside Writy's managed cache are preserved; later downloads are never reset.
+
 Built-in FreeDict packs are imported as bilingual translations. For another
 bilingual StarDict source, pass `--bilingual` to `writy dict import`; ordinary
 StarDict imports treat the payload as definitions. Supply the source's actual
@@ -96,8 +112,9 @@ See the [dictionary download catalogue](docs/dictionary-sources.md) for English
 and Arabic sources, licenses, direct download options, and import commands.
 Lookups combine installed sources with attribution; the 50-entry result budget
 is shared across matching sources so one large dictionary cannot hide the rest.
-Open English WordNet's official JSON release can be converted with
-`python3 tools/wordnet_to_jsonl.py ARCHIVE.zip OUTPUT.jsonl` before importing.
+The GUI installer automatically converts Open English WordNet's official JSON
+release and prepares Wiktionary JSONL. Publisher archives and excluded-record
+logs are retained in the pack cache for inspection.
 
 Use `writy --help` and each command's `--help` for the executable interface.
 Example [Lua bindings](packaging/hyprland/writy.lua) target current Hyprland;

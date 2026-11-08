@@ -7,6 +7,8 @@ pub(super) struct HudSection {
     pub scroll: gtk::ScrolledWindow,
     pub body: gtk::Label,
     pub source: gtk::Label,
+    responses: gtk::Box,
+    rendered: RefCell<Option<(Vec<SourceGroup>, String)>>,
     pub copy_text: Rc<RefCell<String>>,
     pub copy: gtk::Button,
 }
@@ -119,16 +121,17 @@ impl HudStack {
             copy.set_focusable(false);
             row.append(&copy);
             card.append(&row);
+            let source = label("", "writy-source-title");
+            card.append(&source);
             let body = label("", "writy-body");
             body.set_selectable(true);
             body.set_focusable(false);
             body.set_yalign(0.);
             body.set_valign(gtk::Align::Start);
             card.append(&body);
-            let source = label("", "writy-meta");
-            source.set_selectable(true);
-            source.set_focusable(false);
-            card.append(&source);
+            let responses = gtk::Box::new(gtk::Orientation::Vertical, 16);
+            card.append(&responses);
+            card.set_hexpand(true);
             let scroll = gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Never)
                 .vscrollbar_policy(gtk::PolicyType::Automatic)
@@ -136,7 +139,8 @@ impl HudStack {
                 .child(&card)
                 .build();
             scroll.set_overlay_scrolling(false);
-            tabs.append_page(&scroll, Some(&gtk::Label::new(Some(title))));
+            let tab = components::tab_label(title);
+            tabs.append_page(&scroll, Some(&tab));
             sections.insert(
                 category,
                 HudSection {
@@ -144,11 +148,29 @@ impl HudStack {
                     scroll,
                     body,
                     source,
+                    responses,
+                    rendered: RefCell::new(None),
                     copy_text,
                     copy,
                 },
             );
         }
+        let cards: Vec<gtk::Box> = sections
+            .values()
+            .map(|section| section.card.clone())
+            .collect();
+        let last_width = Cell::new(0);
+        window.add_tick_callback(move |window, _| {
+            let width = window.width();
+            if last_width.replace(width) != width {
+                let margin = ((width - 960) / 2).max(0);
+                for card in &cards {
+                    card.set_margin_start(margin);
+                    card.set_margin_end(margin);
+                }
+            }
+            glib::ControlFlow::Continue
+        });
         surface.append(&tabs);
         let footer = label(
             "Shift + scroll changes section · Alt+G opens search",
@@ -248,6 +270,7 @@ impl HudStack {
         monitor: Option<&gdk::Monitor>,
         bounds: gdk::Rectangle,
     ) {
+        let first_query = self.query_text.borrow().is_empty();
         for (key, section) in &self.sections {
             let panel = panels
                 .iter()
@@ -256,22 +279,21 @@ impl HudStack {
             section.scroll.set_visible(panel.is_some());
             section.card.set_visible(panel.is_some());
             if let Some(panel) = panel {
-                if let Some(markup) = &panel.markup {
-                    if section.body.label().as_str() != markup {
-                        section.body.set_markup(markup);
-                    }
-                } else if section.body.text().as_str() != panel.body {
-                    section.body.set_text(&panel.body);
+                let rendered = (panel.groups.clone(), panel.body.clone());
+                if section.rendered.borrow().as_ref() != Some(&rendered) {
+                    components::response_rows(
+                        &section.source,
+                        &section.body,
+                        &section.responses,
+                        panel,
+                    );
+                    *section.rendered.borrow_mut() = Some(rendered);
                 }
                 if panel.copy_text.is_empty() {
                     section.body.add_css_class("writy-hud-pending");
                 } else {
                     section.body.remove_css_class("writy-hud-pending");
                 }
-                if section.source.text().as_str() != panel.source {
-                    section.source.set_text(&panel.source);
-                }
-                section.source.set_visible(!panel.source.is_empty());
                 *section.copy_text.borrow_mut() = panel.copy_text.clone();
                 section.copy.set_sensitive(!panel.copy_text.is_empty());
             }
@@ -279,6 +301,11 @@ impl HudStack {
         if !self.sections.values().any(|s| s.card.get_visible()) {
             self.window.set_visible(false);
             return;
+        }
+        let new_selection = result.snapshot.source == "selection"
+            && *self.query_text.borrow() != result.snapshot.text;
+        if (first_query || new_selection) && self.sections["translation"].scroll.get_visible() {
+            self.tabs.set_current_page(Some(0));
         }
         if self.tabs.current_page().is_none_or(|page| {
             self.tabs

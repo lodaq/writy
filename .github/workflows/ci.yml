@@ -26,6 +26,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check Rust warnings
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test dictionary download preparation
+        run: python -m unittest discover -s tools -p 'test_*.py'
       - name: Test Rust workspace
         run: cargo test --workspace --locked
       - name: Build application

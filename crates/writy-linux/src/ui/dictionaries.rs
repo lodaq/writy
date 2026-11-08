@@ -1,68 +1,50 @@
 //! Discoverable install sources and live, persistent per-source preferences.
 use super::*;
-use writy_core::dictionary::{Dictionary, DictionarySource};
+use writy_core::dictionary::{CatalogueEntry, DictionaryLibrary, DictionarySource};
 
-struct CatalogueEntry {
-    name: &'static str,
-    prefix: &'static str,
-    url: &'static str,
-    detail: &'static str,
-    pack: Option<&'static str>,
+pub(super) use writy_core::dictionary::CATALOGUE;
+
+thread_local! {
+    static OPERATIONS: RefCell<std::collections::BTreeMap<&'static str, &'static str>> = const { RefCell::new(std::collections::BTreeMap::new()) };
 }
-const CATALOGUE: &[CatalogueEntry] = &[
-    CatalogueEntry {
-        name: "FreeDict English → Arabic",
-        prefix: "FreeDict eng-ara",
-        url: "https://freedict.org/downloads/",
-        detail: "Bilingual translations · GPL-2.0-or-later",
-        pack: Some("en-ar"),
-    },
-    CatalogueEntry {
-        name: "FreeDict Arabic → English",
-        prefix: "FreeDict ara-eng",
-        url: "https://freedict.org/downloads/",
-        detail: "Bilingual translations · GPL-2.0-or-later",
-        pack: Some("ar-en"),
-    },
-    CatalogueEntry {
-        name: "Wiktionary English (Kaikki)",
-        prefix: "Wiktionary English",
-        url: "https://kaikki.org/dictionary/English/",
-        detail: "Definitions, examples and word forms · Import plain JSONL · CC-BY-SA-4.0 / GFDL",
-        pack: None,
-    },
-    CatalogueEntry {
-        name: "Wiktionary Arabic (Kaikki)",
-        prefix: "Wiktionary Arabic",
-        url: "https://kaikki.org/dictionary/Arabic/",
-        detail: "Arabic headwords with English glosses · Import plain JSONL · CC-BY-SA-4.0 / GFDL",
-        pack: None,
-    },
-    CatalogueEntry {
-        name: "Open English WordNet",
-        prefix: "Open English WordNet",
-        url: "https://github.com/globalwordnet/english-wordnet",
-        detail: "Senses and semantic relations · Convert using tools/wordnet_to_jsonl.py, then import · CC-BY-4.0",
-        pack: None,
-    },
-    CatalogueEntry {
-        name: "Arramooz Alwaseet",
-        prefix: "Arramooz",
-        url: "https://sourceforge.net/projects/arramooz/files/",
-        detail: "Arabic roots and morphology · Import a StarDict edition with its supplied GPL terms",
-        pack: None,
-    },
-];
+
+fn begin_operation(name: &'static str, status: &'static str) -> bool {
+    OPERATIONS.with(|active| {
+        if let std::collections::btree_map::Entry::Vacant(entry) = active.borrow_mut().entry(name) {
+            entry.insert(status);
+            true
+        } else {
+            false
+        }
+    })
+}
+
+pub(super) fn watch_installs(list: &gtk::Box, tx: &Commands, message: &gtk::Label) {
+    let list = list.downgrade();
+    let tx = tx.clone();
+    let message = message.clone();
+    let mut previous = OPERATIONS.with(|active| active.borrow().clone());
+    glib::timeout_add_local(Duration::from_millis(500), move || {
+        let Some(list) = list.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let current = OPERATIONS.with(|active| active.borrow().clone());
+        if current != previous {
+            populate(&list, &tx, &message);
+            previous = current;
+        }
+        glib::ControlFlow::Continue
+    });
+}
 
 pub(super) fn populate(list: &gtk::Box, tx: &Commands, message: &gtk::Label) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
     let loading = label("Loading dictionary status…", "writy-status");
+    // Keep the current library allocated while discovery runs, preserving scrolling.
+    loading.set_visible(list.first_child().is_none());
     list.append(&loading);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let result = Dictionary::open(crate::ipc::database_path())
+        let result = crate::ipc::open_dictionary()
             .and_then(|d| d.source_states())
             .map_err(|e| e.to_string());
         let _ = sender.send(result);
@@ -74,15 +56,22 @@ pub(super) fn populate(list: &gtk::Box, tx: &Commands, message: &gtk::Label) {
         let Some(list) = list.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        // A later refresh replaces the loading widget; discard older responses.
-        if list.first_child().as_ref() != Some(loading.upcast_ref()) {
+        // The last marker belongs to the newest refresh; discard older responses.
+        if list.last_child().as_ref() != Some(loading.upcast_ref()) {
+            if loading.parent().as_ref() == Some(list.upcast_ref()) {
+                list.remove(&loading);
+            }
             return glib::ControlFlow::Break;
         }
         match receiver.try_recv() {
             Ok(Ok(sources)) => render(&list, &tx, &message, &sources),
-            Ok(Err(error)) => loading.set_text(&format!("Dictionary status unavailable: {error}")),
+            Ok(Err(error)) => {
+                loading.set_visible(true);
+                loading.set_text(&format!("Dictionary status unavailable: {error}"));
+            }
             Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
             Err(_) => {
+                loading.set_visible(true);
                 loading.set_text("Dictionary discovery stopped. Try Refresh dictionary status.")
             }
         }
@@ -99,46 +88,88 @@ pub(super) fn render(
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
-    for entry in CATALOGUE {
-        let installed: Vec<_> = sources
-            .iter()
-            .filter(|s| s.attribution.name.starts_with(entry.prefix))
-            .collect();
-        if installed.is_empty() {
-            let row = row(entry.name, entry.detail);
-            row.append(&label("Not installed", "writy-dictionary-state"));
-            let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            if let Some(pack) = entry.pack {
-                let install = gtk::Button::with_label("Install");
-                let pack = pack.to_owned();
-                let list = list.clone();
-                let tx = tx.clone();
-                let message = message.clone();
-                install.connect_clicked(move |button| {
-                    install_pack(button, &pack, &list, &tx, &message)
-                });
-                actions.append(&install);
-            }
-            actions.append(&gtk::LinkButton::with_label(entry.url, "Download source"));
-            row.append(&actions);
-            list.append(&row);
-        } else {
-            for source in installed {
-                installed_row(list, source, tx, message);
-            }
-        }
+    list.append(&label("Downloaded", "writy-library-title"));
+    let downloaded = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    if sources.is_empty() {
+        downloaded.append(&label("No downloaded dictionaries yet.", "writy-meta"));
     }
-    // Imported third-party and custom dictionaries are never hidden by the catalogue.
     for source in sources {
-        if !CATALOGUE
-            .iter()
-            .any(|entry| source.attribution.name.starts_with(entry.prefix))
-        {
-            installed_row(list, source, tx, message);
-        }
+        installed_row(&downloaded, source, tx, message);
     }
-    list.append(&label("Other dictionaries can be imported as StarDict (.ifo) or Kaikki JSONL with their attribution and licence. Downloading a source does not install it; import it with writy dict import.", "writy-meta"));
+    list.append(&downloaded);
+    list.append(&label("Explore", "writy-library-title"));
+    let explore = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    for entry in CATALOGUE {
+        let installed = sources.iter().any(|source| entry.matches(source));
+        let busy = OPERATIONS.with(|active| active.borrow().get(entry.name).copied());
+        let row = row(entry.name, entry.detail);
+        row.append(&label(
+            if installed {
+                "Downloaded"
+            } else {
+                "Not downloaded"
+            },
+            "writy-dictionary-state",
+        ));
+        let actions = gtk::FlowBox::new();
+        actions.add_css_class("writy-dictionary-actions");
+        actions.set_selection_mode(gtk::SelectionMode::None);
+        actions.set_min_children_per_line(1);
+        actions.set_max_children_per_line(3);
+        actions.set_column_spacing(8);
+        actions.set_row_spacing(8);
+        let download = components::action_button(if installed {
+            "Download"
+        } else {
+            busy.unwrap_or("Download")
+        });
+        download.set_sensitive(!installed && busy.is_none());
+        download.add_css_class("writy-download-action");
+        download.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Download {}",
+            entry.name
+        ))]);
+        let target = list.clone();
+        let commands = tx.clone();
+        let status = message.clone();
+        download.connect_clicked(move |button| {
+            install_pack(button, entry, &target, &commands, &status)
+        });
+        actions.insert(&download, -1);
+        if installed {
+            let remove = components::action_button(if busy == Some("Removing…") {
+                "Removing…"
+            } else {
+                "Remove"
+            });
+            remove.set_sensitive(busy.is_none());
+            remove.add_css_class("destructive-action");
+            remove.update_property(&[gtk::accessible::Property::Label(&format!(
+                "Remove {}",
+                entry.name
+            ))]);
+            let target = list.clone();
+            let commands = tx.clone();
+            let status = message.clone();
+            remove.connect_clicked(move |button| {
+                remove_pack(button, entry, &target, &commands, &status)
+            });
+            actions.insert(&remove, -1);
+        }
+        actions.insert(
+            &gtk::LinkButton::with_label(entry.url, "Source & licence"),
+            -1,
+        );
+        for index in 0..if installed { 3 } else { 2 } {
+            actions.child_at_index(index).unwrap().set_focusable(false);
+        }
+        row.append(&actions);
+        explore.append(&row);
+    }
+    list.append(&explore);
+    list.append(&label("Download dictionaries from Explore, then turn them on or off in Downloaded. Turning one off keeps its data. Remove deletes its data and cached download.", "writy-meta"));
 }
+
 fn row(name: &str, detail: &str) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
     row.add_css_class("writy-dictionary-row");
@@ -158,6 +189,12 @@ fn installed_row(list: &gtk::Box, source: &DictionarySource, tx: &Commands, mess
     let toggle = gtk::Switch::new();
     toggle.set_valign(gtk::Align::Center);
     toggle.set_active(source.enabled);
+    let catalogue = CATALOGUE.iter().find(|entry| entry.matches(source));
+    toggle.set_sensitive(
+        !catalogue.is_some_and(|entry| {
+            OPERATIONS.with(|active| active.borrow().contains_key(entry.name))
+        }),
+    );
     toggle.update_property(&[gtk::accessible::Property::Label(&format!(
         "Enable {}",
         source.attribution.name
@@ -167,9 +204,12 @@ fn installed_row(list: &gtk::Box, source: &DictionarySource, tx: &Commands, mess
     let tx = tx.clone();
     let message = message.clone();
     toggle.connect_state_set(move |_, enabled| {
-        match Dictionary::open(crate::ipc::database_path())
-            .and_then(|d| d.set_source_enabled(&id, enabled))
+        if catalogue
+            .is_some_and(|entry| OPERATIONS.with(|active| active.borrow().contains_key(entry.name)))
         {
+            return glib::Propagation::Stop;
+        }
+        match crate::ipc::open_dictionary().and_then(|d| d.set_source_enabled(&id, enabled)) {
             Ok(()) => {
                 status.set_text(&installed_status(count, enabled));
                 send(&tx, Command::Reload);
@@ -192,46 +232,111 @@ fn installed_status(count: usize, enabled: bool) -> String {
         if enabled { "Enabled" } else { "Disabled" }
     )
 }
-fn install_pack(
+pub(super) fn install_pack(
     button: &gtk::Button,
-    pack: &str,
+    entry: &'static CatalogueEntry,
     list: &gtk::Box,
     tx: &Commands,
     message: &gtk::Label,
 ) {
-    let child = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .args(["dict", "install", pack])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-    });
-    let mut child = match child {
-        Ok(child) => child,
-        Err(error) => {
-            message.set_text(&format!("Cannot start installation: {error}"));
-            return;
-        }
-    };
+    if !begin_operation(entry.name, "Downloading…") {
+        return;
+    }
     button.set_sensitive(false);
-    message.set_text("Downloading and verifying dictionary…");
+    button.set_label("Downloading…");
+    message.set_text(&format!(
+        "Downloading {}. You can keep using Writy.",
+        entry.name
+    ));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> anyhow::Result<usize> {
+            tokio::runtime::Runtime::new()?.block_on(
+                DictionaryLibrary::new(crate::ipc::database_path()).install(entry, || {
+                    let _ = sender.send(Ok(None));
+                }),
+            )
+        })()
+        .map_err(|error| format!("{error:#}"));
+        let _ = sender.send(result.map(Some));
+    });
     let button = button.clone();
     let list = list.clone();
     let tx = tx.clone();
     let message = message.clone();
-    glib::timeout_add_local(Duration::from_millis(250), move || {
-        match child.try_wait() {
-            Ok(None) => return glib::ControlFlow::Continue,
-            Ok(Some(status)) if status.success() => {
-                message.set_text("Dictionary installed and ready.");
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        match receiver.try_recv() {
+            Ok(Ok(None)) => {
+                OPERATIONS.with(|active| active.borrow_mut().insert(entry.name, "Importing…"));
+                button.set_label("Importing…");
+                message.set_text(&format!(
+                    "Installing {}. Large dictionaries can take several minutes.",
+                    entry.name
+                ));
+                return glib::ControlFlow::Continue;
+            }
+            Ok(Ok(Some(count))) => {
+                OPERATIONS.with(|active| active.borrow_mut().remove(entry.name));
+                message.set_text(&format!("{} installed: {count} entries.", entry.name));
                 populate(&list, &tx, &message);
                 send(&tx, Command::Reload);
             }
-            _ => {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+            result => {
+                OPERATIONS.with(|active| active.borrow_mut().remove(entry.name));
+                let error = match result {
+                    Ok(Err(error)) => error,
+                    _ => "Installation stopped. Try again.".into(),
+                };
                 button.set_sensitive(true);
-                message.set_text("Installation failed. Try again or check writy dict install.");
+                button.set_label("Download");
+                button.set_tooltip_text(Some(&error));
+                message.set_text(&format!("Installation failed: {error}"));
+                populate(&list, &tx, &message);
             }
         }
+        glib::ControlFlow::Break
+    });
+}
+
+fn remove_pack(
+    button: &gtk::Button,
+    entry: &'static CatalogueEntry,
+    list: &gtk::Box,
+    tx: &Commands,
+    message: &gtk::Label,
+) {
+    if !begin_operation(entry.name, "Removing…") {
+        return;
+    }
+    button.set_sensitive(false);
+    button.set_label("Removing…");
+    message.set_text(&format!("Removing {}…", entry.name));
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = DictionaryLibrary::new(crate::ipc::database_path())
+            .remove(entry)
+            .map_err(|error| format!("{error:#}"));
+        let _ = sender.send(result);
+    });
+    let list = list.clone();
+    let tx = tx.clone();
+    let message = message.clone();
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        let result = match receiver.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+            Err(_) => Err("Dictionary removal stopped. Try again.".into()),
+            Ok(result) => result,
+        };
+        OPERATIONS.with(|active| active.borrow_mut().remove(entry.name));
+        match result {
+            Ok(()) => {
+                message.set_text(&format!("{} removed.", entry.name));
+                send(&tx, Command::Reload);
+            }
+            Err(error) => message.set_text(&format!("Removal failed: {error}")),
+        }
+        populate(&list, &tx, &message);
         glib::ControlFlow::Break
     });
 }

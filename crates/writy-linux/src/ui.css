@@ -1,12 +1,12 @@
 /* Native, theme-aware materials: solid enough to remain legible without compositor blur. */
-window.writy-main, window.writy-settings { background: @theme_bg_color; }
+window.writy-main, window.writy-settings { background: @writy_bg; }
 .writy-main, .writy-settings, .writy-hud {
     font-family: system-ui, 'Noto Sans', 'Noto Sans Arabic', sans-serif;
     font-size: 1em;
 }
 window.writy-hud { background: transparent; }
 .writy-card {
-    background: mix(@theme_bg_color, @theme_base_color, .65);
+    background: @writy_surface;
     border: 1px solid alpha(@theme_fg_color, .12);
     border-radius: 14px;
     padding: 14px 16px;
@@ -25,7 +25,7 @@ window.writy-hud { background: transparent; }
     color: @theme_fg_color;
 }
 .writy-body { font-size: 1em; }
-.writy-meta { font-size: .9em; color: alpha(@theme_fg_color, .72); }
+.writy-meta { font-size: .9em; color: alpha(@theme_fg_color, .78); }
 .writy-hud .writy-meta, .writy-hud .writy-title { font-size: .8em; }
 .writy-query { font-size: 1.35em; padding: 12px; border-radius: 12px; }
 .writy-query text { background: @theme_base_color; }
@@ -45,15 +45,15 @@ window.writy-hud { background: transparent; }
 }
 .writy-main button:active, .writy-settings button:active, .writy-hud button:active {
     background-image: none;
-    background-color: alpha(@theme_selected_bg_color, .24);
+    background-color: alpha(@writy_accent, .24);
 }
 .writy-main button.suggested-action, .writy-settings button.suggested-action {
     background-image: none;
-    background-color: @theme_selected_bg_color;
-    color: @theme_selected_fg_color;
+    background-color: @writy_accent;
+    color: white;
 }
 .writy-main button.suggested-action:active, .writy-settings button.suggested-action:active {
-    background-color: shade(@theme_selected_bg_color, .85);
+    background-color: shade(@writy_accent, .85);
 }
 .writy-settings entry, .writy-settings dropdown {
     border-radius: 8px;
@@ -63,7 +63,7 @@ window.writy-hud { background: transparent; }
 .writy-hud button { padding: 3px 8px; font-size: .8em; }
 
 .writy-toolbar {
-    background: mix(@theme_bg_color, @theme_base_color, .4);
+    background: @writy_bg;
     border-bottom: 1px solid alpha(@theme_fg_color, .08);
     box-shadow: none;
 }
@@ -72,7 +72,7 @@ window.writy-hud { background: transparent; }
 .writy-empty-title { font-size: 1.2em; font-weight: 600; letter-spacing: -.2px; }
 .writy-footer {
     padding: 12px 20px;
-    background: mix(@theme_bg_color, @theme_base_color, .4);
+    background: @writy_bg;
     border-top: 1px solid alpha(@theme_fg_color, .12);
 }
 .writy-main button:hover, .writy-settings button:hover, .writy-hud button:hover {
@@ -80,7 +80,7 @@ window.writy-hud { background: transparent; }
 }
 .writy-main button:focus-visible, .writy-settings button:focus-visible,
 .writy-hud button:focus-visible {
-    outline: 2px solid @theme_selected_bg_color;
+    outline: 2px solid @writy_accent;
     outline-offset: 2px;
 }
 .writy-main button:disabled, .writy-settings button:disabled, .writy-hud button:disabled {
@@ -117,7 +117,7 @@ window.writy-hud { background: transparent; }
 
 /* One reading surface; no per-section viewport or body clipping. */
 .writy-hud-surface {
-    background: mix(@theme_base_color, @theme_bg_color, .2);
+    background: @writy_surface;
     border: 1px solid alpha(@theme_fg_color, .18);
     border-radius: 14px;
     box-shadow: inset 0 1px alpha(@theme_base_color, .4);
@@ -158,3 +158,206 @@ window.writy-hud { background: transparent; }
 .writy-hud-fullscreen .writy-hud-surface { border-radius: 0; border-width: 0; }
 .writy-dictionary-row { padding: 12px 0; border-bottom: 1px solid alpha(@theme_fg_color, .1); }
 .writy-dictionary-state { font-size: .85em; color: alpha(@theme_fg_color, .8); }
+
+/* Source headings bind each dictionary to its own readable group. */
+.writy-source-title {
+    font-size: .8em;
+    font-weight: 600;
+    color: alpha(@theme_fg_color, .7);
+    margin-top: 8px;
+}
+.writy-result-section, .writy-hud-section { padding: 18px 20px 24px; }
+.writy-result-section separator, .writy-hud-section separator {
+    min-height: 1px;
+    background: alpha(@theme_fg_color, .2);
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+.writy-hud-tabs > header > tabs > tab,
+.writy-result-tabs > header > tabs > tab {
+    min-height: 34px;
+    padding: 6px 14px;
+    border-right: 1px solid alpha(@theme_fg_color, .07);
+}
+.writy-hud-tabs > header > tabs > tab:checked,
+.writy-result-tabs > header > tabs > tab:checked {
+    background: alpha(@theme_selected_bg_color, .12);
+}
+
+/* The supplied search design: broad actions and one joined reading surface. */
+@define-color writy_bg shade(@theme_base_color, .86);
+@define-color writy_surface mix(@writy_bg, @theme_bg_color, .12);
+@define-color writy_accent #0b61d6;
+@define-color writy_link mix(@theme_fg_color, @writy_accent, .45);
+@define-color writy_destructive mix(@theme_fg_color, @error_color, .3);
+@define-color writy_button_surface mix(@writy_surface, @theme_fg_color, .07);
+.writy-settings { font-size: 1.14em; }
+.writy-hud { font-size: 1.08em; }
+.writy-settings .writy-title { font-size: 1em; letter-spacing: 0; }
+.writy-settings .writy-section-title { font-size: 1.55em; letter-spacing: -.3px; }
+.writy-settings .writy-card { padding: 16px 20px; }
+.writy-settings .writy-toolbar { padding: 6px 12px; }
+.writy-settings .writy-toolbar .writy-title { font-size: 1.1em; }
+.writy-settings entry {
+    background: alpha(@theme_fg_color, .035);
+    border: 1px solid alpha(@theme_fg_color, .18);
+    min-height: 28px;
+    padding: 6px 12px;
+    box-shadow: none;
+}
+.writy-settings entry:focus-within { border-color: @writy_accent; }
+.writy-settings button {
+    background-image: none;
+    background-color: @writy_button_surface;
+    border: 1px solid alpha(@theme_fg_color, .16);
+    border-radius: 10px;
+    min-height: 26px;
+    color: @theme_fg_color;
+}
+.writy-settings button:hover { background-color: alpha(@theme_fg_color, .12); }
+.writy-settings button:active { background-color: alpha(@writy_accent, .24); }
+.writy-settings button.suggested-action { background: @writy_accent; color: white; }
+.writy-settings button.suggested-action:active { background: shade(@writy_accent, .85); }
+.writy-settings button.destructive-action { color: @writy_destructive; }
+.writy-settings button.link { background: transparent; border-color: transparent; color: @writy_link; }
+.writy-settings switch:checked { background: @writy_accent; border-color: @writy_accent; }
+.writy-preference-row { padding: 10px 0; }
+.writy-preference-row + .writy-preference-row { border-top: 1px solid alpha(@theme_fg_color, .1); }
+.writy-preference-title { font-weight: 500; }
+.writy-library-title { font-size: 1.15em; font-weight: 600; margin-top: 12px; }
+.writy-dictionary-actions > flowboxchild { padding: 0; background: transparent; }
+.writy-settings button.writy-download-action { color: @writy_link; }
+.writy-settings-tabs > header, .writy-hud-tabs > header {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid alpha(@theme_fg_color, .12);
+    padding: 10px 12px;
+    box-shadow: none;
+}
+.writy-settings-tabs > header > tabs > tab, .writy-hud-tabs > header > tabs > tab {
+    border: none;
+    border-radius: 10px;
+    min-height: 26px;
+    padding: 6px 14px;
+    background: alpha(@theme_fg_color, .05);
+    box-shadow: none;
+}
+.writy-settings-tabs > header > tabs > tab:checked, .writy-hud-tabs > header > tabs > tab:checked {
+    background: @writy_accent;
+    color: white;
+}
+.writy-settings-tabs > stack, .writy-hud-tabs > stack { background: transparent; border: none; }
+.writy-hud .writy-title { font-size: 1em; letter-spacing: 0; }
+.writy-hud .writy-source-title { font-size: .9em; font-weight: 400; color: alpha(@theme_fg_color, .78); }
+.writy-hud-tabs > header > tabs > tab label { font-size: .9em; }
+.writy-hud-section { border-bottom: none; }
+.writy-hud-header button:checked { background: alpha(@writy_accent, .18); }
+window.writy-main { background: @writy_bg; }
+.writy-main { font-size: 1.36em; color: @theme_fg_color; }
+.writy-main .writy-toolbar {
+    background: transparent;
+    border: none;
+    min-height: 36px;
+    padding: 4px 12px;
+}
+.writy-main .writy-header { font-size: 1.9em; letter-spacing: -.5px; }
+.writy-main .writy-search-header .writy-meta { font-size: 1em; }
+.writy-main .writy-search-header separator { margin: 12px 0; background: alpha(@theme_fg_color, .2); }
+.writy-main .writy-search-header button {
+    background: transparent;
+    background-image: none;
+    border: none;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 4px;
+}
+.writy-main .writy-search-header button image { -gtk-icon-size: 28px; }
+.writy-main .writy-title { font-size: 1.1em; letter-spacing: 0; }
+.writy-main .writy-input {
+    background: transparent;
+    border-color: alpha(@theme_fg_color, .24);
+    border-radius: 14px;
+}
+.writy-main .writy-input:focus-within { border-color: @writy_accent; }
+.writy-main .writy-query { font-size: 1.4em; padding: 12px 16px; background: transparent; }
+.writy-main .writy-query text { background: transparent; }
+.writy-main button {
+    background: alpha(@theme_fg_color, .09);
+    background-image: none;
+    border: 1px solid alpha(@theme_fg_color, .18);
+    border-radius: 12px;
+    color: @theme_fg_color;
+}
+.writy-main button:hover { background: alpha(@theme_fg_color, .14); }
+.writy-main button.suggested-action {
+    background: @writy_accent;
+    border-color: alpha(white, .18);
+    color: white;
+}
+.writy-main button.suggested-action:hover { background: shade(@writy_accent, 1.1); }
+.writy-main .writy-search-actions button { min-height: 34px; padding: 8px 24px; font-size: 1.2em; }
+.writy-main .writy-search-status { font-size: .85em; }
+.writy-main .writy-result-tabs {
+    border: 1px solid alpha(@theme_fg_color, .18);
+    border-radius: 18px;
+    background: @writy_surface;
+}
+.writy-main .writy-result-tabs > header {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid alpha(@theme_fg_color, .1);
+    padding: 15px 22px;
+    box-shadow: none;
+}
+.writy-main .writy-result-tabs > header > tabs { background: transparent; }
+.writy-main .writy-result-tabs > header > tabs > tab {
+    min-height: 30px;
+    border: none;
+    border-radius: 18px;
+    padding: 8px 28px;
+    margin: 0;
+    background: alpha(@theme_fg_color, .05);
+    box-shadow: none;
+    font-size: 1.15em;
+}
+.writy-main .writy-result-tabs > header > tabs > tab:checked {
+    background: shade(@writy_accent, .93);
+    color: white;
+}
+.writy-main .writy-result-tabs > stack { border: none; background: transparent; }
+.writy-main .writy-result-section {
+    padding: 20px 32px 32px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
+.writy-main .writy-result-header .writy-title, .writy-main .writy-section-title { font-size: 1.5em; font-weight: 600; }
+.writy-result-header > flowboxchild { padding: 0; background: transparent; }
+.writy-main .writy-result-section button { padding: 5px 16px; font-size: 1.1em; }
+.writy-main .writy-source-title {
+    font-size: 1.1em;
+    font-weight: 400;
+    margin-top: 0;
+    color: alpha(@theme_fg_color, .78);
+}
+.writy-main .writy-source-group + .writy-source-group {
+    border-top: 1px solid alpha(@theme_fg_color, .12);
+    padding-top: 20px;
+}
+.writy-main .writy-result-entry { padding: 4px 16px 20px 0; }
+.writy-main .writy-result-entry:last-child { padding-bottom: 4px; }
+.writy-main .writy-entry-headword {
+    font-size: 2.2em;
+    font-weight: 600;
+    letter-spacing: 0;
+}
+.writy-main .writy-body { font-size: 1.15em; }
+.writy-main .writy-body.writy-rtl { font-size: 1.4em; }
+.writy-main .writy-sense-number {
+    min-width: 88px;
+    padding-top: 12px;
+    font-size: 1.15em;
+    font-weight: 600;
+    color: alpha(@theme_fg_color, .78);
+}
+.writy-rtl { letter-spacing: 0; }

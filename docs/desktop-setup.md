@@ -20,8 +20,8 @@ content was preserved. A pre-install backup is under
 The service starts from Hyprland's startup callback; it does not need separate
 `systemctl enable` activation. Avoid starting a second manual daemon.
 
-Both FreeDict packs and the default Ollama models are already installed. Cloud
-assistance is unconfigured. Local generation requires Ollama to be running.
+The default Ollama models are installed. Dictionary downloads are managed in
+Settings → Dictionary library. Cloud assistance is unconfigured. Local generation requires Ollama to be running.
 
 ## Everyday controls
 
@@ -42,11 +42,34 @@ the panel; its position persists for the session. The fullscreen button fills th
 current monitor and restores the compact panel on the next click. Drag across
 result text to select it; Arabic content is aligned to the right.
 
-Settings lists the supported dictionary catalogue and all imported dictionaries.
-Installed sources show Enabled or Disabled and an entry count. Switches save
-immediately and affect both lookups and completions without deleting the data.
-FreeDict packs have Install buttons; other catalogue entries link to their source
-and state the required import format. Refresh reloads installation status.
+Alt+G fills the input from the current text selection, or from the clipboard
+when there is no selected text. Multi-line text is preserved.
+
+Settings → Dictionary library has two sections. **Explore** always lists all eight
+sources: both FreeDict directions, English and Arabic Wiktionary, Open English
+WordNet, Arramooz Alwaseet, GNU GCIDE, and Princeton WordNet 3.0. GCIDE includes
+historical English usage; Princeton WordNet overlaps Open English WordNet.
+Publisher and licence links remain available beside each source.
+
+Click **Download** once to download, extract, convert, and import in the
+background. The dictionary then appears in **Downloaded** with an enabled
+on/off switch. Switches save immediately and affect lookups and completions;
+turning one off keeps its data. In Explore, downloaded sources show a disabled
+Download button and an active **Remove** button. Remove immediately deletes the
+source's entries, preference, and managed cached download. Download becomes
+available again. Progress and failures are shown without blocking the desktop.
+
+The first library access after this update resets all old dictionary sources,
+including custom imports, their toggle preferences, and Writy's pack cache.
+Download them again from Explore. This reset is recorded once in the dictionary
+database, so subsequent starts preserve new downloads. Application settings and
+original files outside Writy's cache remain untouched. Failed cleanup reports an
+error and can be retried without discarding installed entries.
+
+Local StarDict `.ifo` and prepared Kaikki `.jsonl` files can still be imported with
+`writy dict import`. Catalogue installation needs no terminal. Python 3 is included
+in the packaged runtime dependencies. Publisher archives, licence files, and
+preparation records are retained in Writy's cache until the source is removed.
 
 Useful commands:
 

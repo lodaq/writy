@@ -6,7 +6,9 @@ use std::{fs, path::Path, time::Duration};
 use unicode_normalization::UnicodeNormalization;
 
 mod kaikki;
+mod library;
 mod markup;
+pub use library::{CATALOGUE, CatalogueEntry, DictionaryLibrary};
 mod packs;
 mod stardict;
 pub use packs::{OpenPack, download_open_pack};
@@ -71,6 +73,50 @@ impl Dictionary {
         self.connection.execute("INSERT INTO dictionary_preferences(source_key, enabled) VALUES (?1, ?2) ON CONFLICT(source_key) DO UPDATE SET enabled=excluded.enabled", params![id, enabled])?;
         Ok(())
     }
+    /// Remove whole sources atomically; foreign keys also remove their aliases.
+    pub fn remove_sources(&mut self, ids: &[String]) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        for id in ids {
+            replace_source(&transaction, id)?;
+            transaction.execute(
+                "DELETE FROM dictionary_preferences WHERE source_key=?1",
+                [id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Reset the legacy library once before accepting new downloads or imports.
+    pub fn reset_library_once(&mut self, cache: &Path) -> Result<bool> {
+        if self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM dictionary_migrations WHERE version=1)",
+            [],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Ok(false);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let done = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM dictionary_migrations WHERE version=1)",
+            [],
+            |r| r.get::<_, bool>(0),
+        )?;
+        if done {
+            return Ok(false);
+        }
+        match fs::remove_dir_all(cache) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("Removing legacy dictionary cache"),
+        }
+        transaction.execute_batch("DELETE FROM lexical_aliases; DELETE FROM lexical_entries; DELETE FROM dictionary_preferences; INSERT INTO dictionary_migrations(version) VALUES (1);")?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -83,6 +129,7 @@ impl Dictionary {
             CREATE TABLE IF NOT EXISTS lexical_entries (
                 id INTEGER PRIMARY KEY, source_key TEXT NOT NULL, headword TEXT NOT NULL, payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dictionary_migrations (version INTEGER PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS dictionary_preferences (source_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)));
             CREATE INDEX IF NOT EXISTS lexical_sources ON lexical_entries(source_key);
             CREATE TABLE IF NOT EXISTS lexical_aliases (

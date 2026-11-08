@@ -2,6 +2,21 @@
 
 Research checked 2026-10-25 against publisher/project sources. This is a practical catalogue, not a claim to enumerate every dictionary on the internet. A readable website, downloadable mobile application, or GitHub code licence does not automatically grant permission to redistribute its dictionary content. Counts and download sizes change.
 
+## Desktop catalogue
+
+Explore offers eight automatic downloads: both FreeDict directions, English and
+Arabic Wiktionary, Open English WordNet, Arramooz, GCIDE, and Princeton WordNet.
+Downloaded dictionaries have on/off switches; Remove in Explore deletes entries
+and the managed cache. The library update resets legacy imports and caches once.
+
+GCIDE uses the publisher's [0.52 ZIP](https://ftp.gnu.org/gnu/gcide/gcide-0.52.zip),
+retaining `COPYING` and the original Windows-1252 `CIDE.*` files. Conversion keeps
+headwords, parts of speech, and separate definitions; historical material remains
+labelled in the catalogue. Princeton WordNet uses the official
+[3.0 archive](https://wordnetcode.princeton.edu/3.0/WordNet-3.0.tar.gz), retaining
+`LICENSE` and converting the `dict/data.*` synsets to definitions, examples, and
+synonyms. Its coverage overlaps OEWN and is attributed separately.
+
 ## Recommended offline foundation
 
 Use several complementary source families: FreeDict for Arabic–English translations, Open English WordNet for English senses and semantic relations, Arabic WordNet for Arabic synsets, and Wiktionary for additional definitions, forms, and examples. Preserve provenance for each sense. Two editions or mirrors of the same upstream dictionary are not independent evidence.

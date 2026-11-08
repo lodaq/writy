@@ -18,6 +18,25 @@ requests, model generation, dictionary work, or blocking socket I/O on the
 compositor event loop. It never grabs or consumes the user's ordinary keys.
 See [its protocol/build guide](../bridge/hyprland/README.md).
 
+The core dictionary library owns catalogue metadata, pack preparation, cached
+files, import selection, and removal. GTK and CLI callers use the same install
+workflow; GTK owns its worker and progress display. Existing Rust FreeDict and
+Python publisher preparation stay internal to that workflow. Imports and removals
+serialize within a process; SQLite transactions and bounded lock waits still
+coordinate separate processes.
+
+The Linux reading-result module prepares source groups, pending states, display
+text, safe markup selection, and copy text for search and HUD rendering. Search
+retains its compact Arramooz formatting; HUD and clipboard text retain their
+existing forms. Rendering does not decide dictionary-specific formatting.
+
+The Linux Generation module owns request content, edit anchors, cancellation,
+and invalidation. Backend input transitions invalidate results before publishing
+a new generation, even when the display queue is full. The display independently
+rejects stale events and clears after one frame if a clear event was dropped.
+Keeping a read-only HUD visible never keeps an edit anchor valid; accessibility
+still verifies the target immediately before replacement.
+
 The daemon listens on runtime Unix sockets inside `$XDG_RUNTIME_DIR/writy/`.
 The bridge uses `bridge.sock` with newline-delimited JSON, protocol version 1,
 sequence numbers, and focus epochs. It starts with capture disabled; the daemon

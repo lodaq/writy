@@ -327,3 +327,92 @@ fn disabled_sources_stay_installed_but_do_not_supply_results_or_completions() {
     assert_eq!(db.lookup("decision").unwrap().len(), 1);
     assert_eq!(db.complete("dec", 3).unwrap(), vec!["decision"]);
 }
+
+#[test]
+fn source_removal_is_atomic_and_keeps_other_dictionaries() {
+    let dir = TempDir::new().unwrap();
+    let ifo = stardict(dir.path(), &[("book", "a volume")], &[("books", 0)], "m");
+    let mut db = Dictionary::open(":memory:").unwrap();
+    db.import_stardict(&ifo, Language::English, source())
+        .unwrap();
+    let id = db.source_states().unwrap()[0].id.clone();
+    let mut other = source();
+    other.name = "Other".into();
+    db.import_stardict(&ifo, Language::English, other).unwrap();
+    db.set_source_enabled(&id, false).unwrap();
+    db.connection.execute_batch("CREATE TRIGGER fail_remove BEFORE DELETE ON dictionary_preferences BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+    assert!(db.remove_sources(std::slice::from_ref(&id)).is_err());
+    assert_eq!(db.source_states().unwrap().len(), 2);
+    db.connection
+        .execute_batch("DROP TRIGGER fail_remove")
+        .unwrap();
+    db.remove_sources(&[id]).unwrap();
+    assert_eq!(db.source_states().unwrap().len(), 1);
+    assert_eq!(db.lookup("books").unwrap().len(), 1);
+    assert_eq!(db.lookup("book").unwrap()[0].source.name, "Other");
+    assert_eq!(
+        db.connection
+            .query_row("SELECT COUNT(*) FROM dictionary_preferences", [], |r| r
+                .get::<_, usize>(
+                0
+            ))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.connection
+            .query_row("SELECT COUNT(*) FROM lexical_aliases", [], |r| r
+                .get::<_, usize>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn library_reset_is_once_only_and_retryable_after_cleanup_failure() {
+    let dir = TempDir::new().unwrap();
+    let ifo = stardict(dir.path(), &[("book", "a volume")], &[], "m");
+    let path = dir.path().join("dictionary.sqlite3");
+    let cache = dir.path().join("packs");
+    let mut db = Dictionary::open(&path).unwrap();
+    db.import_stardict(&ifo, Language::English, source())
+        .unwrap();
+    let id = db.source_states().unwrap()[0].id.clone();
+    db.set_source_enabled(&id, false).unwrap();
+    let mut catalogue = source();
+    catalogue.name = "GNU GCIDE".into();
+    catalogue.url = "https://gcide.gnu.org.ua/download".into();
+    db.import_stardict(&ifo, Language::English, catalogue)
+        .unwrap();
+    fs::write(&cache, "not a directory").unwrap();
+    assert!(db.reset_library_once(&cache).is_err());
+    assert_eq!(db.source_states().unwrap().len(), 2);
+    fs::remove_file(&cache).unwrap();
+    fs::create_dir(&cache).unwrap();
+    fs::write(cache.join("download"), "cached").unwrap();
+    fs::write(dir.path().join("settings.toml"), "keep").unwrap();
+    db.connection.execute_batch("CREATE TRIGGER fail_reset BEFORE DELETE ON dictionary_preferences BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+    assert!(db.reset_library_once(&cache).is_err());
+    assert_eq!(db.source_states().unwrap().len(), 2);
+    db.connection
+        .execute_batch("DROP TRIGGER fail_reset")
+        .unwrap();
+    assert!(db.reset_library_once(&cache).unwrap());
+    assert!(db.source_states().unwrap().is_empty());
+    assert!(!cache.exists());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("settings.toml")).unwrap(),
+        "keep"
+    );
+    assert!(ifo.is_file());
+    db.import_stardict(&ifo, Language::English, source())
+        .unwrap();
+    fs::create_dir(&cache).unwrap();
+    fs::write(cache.join("new-download"), "keep").unwrap();
+    drop(db);
+    let mut db = Dictionary::open(path).unwrap();
+    assert!(!db.reset_library_once(&cache).unwrap());
+    assert_eq!(db.source_states().unwrap().len(), 1);
+    assert!(cache.join("new-download").is_file());
+    assert!(db.source_states().unwrap()[0].enabled);
+}

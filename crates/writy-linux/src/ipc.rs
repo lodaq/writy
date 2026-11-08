@@ -97,6 +97,9 @@ impl Drop for SocketCleanup {
 pub fn database_path() -> PathBuf {
     writy_core::config::data_dir().join("dictionary.sqlite3")
 }
+pub fn open_dictionary() -> Result<writy_core::dictionary::Dictionary> {
+    writy_core::dictionary::DictionaryLibrary::new(database_path()).open()
+}
 pub fn ensure_parent(path: &Path) -> Result<()> {
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;

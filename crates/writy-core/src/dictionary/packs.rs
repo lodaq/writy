@@ -22,6 +22,9 @@ impl OpenPack {
             Self::ArabicEnglish => "ara-eng",
         }
     }
+    pub fn cache_path(self, cache: &Path) -> PathBuf {
+        cache.join(format!("freedict-{}-0.6.3", self.id()))
+    }
     pub fn language(self) -> Language {
         match self {
             Self::EnglishArabic => Language::English,
@@ -57,7 +60,7 @@ impl OpenPack {
 /// No text query is sent; the return value is the installed `.ifo` path for import.
 pub async fn download_open_pack(pack: OpenPack, cache_dir: &Path) -> Result<PathBuf> {
     fs::create_dir_all(cache_dir).context("Creating dictionary pack cache")?;
-    let destination = cache_dir.join(format!("freedict-{}-0.6.3", pack.id()));
+    let destination = pack.cache_path(cache_dir);
     let installed = destination
         .join(pack.id())
         .join(format!("{}.ifo", pack.id()));

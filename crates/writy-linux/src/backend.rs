@@ -1,16 +1,13 @@
 use crate::{
-    accessibility::{Accessibility, FieldSnapshot, Observation},
-    input::{Decoded, Decoder},
+    accessibility::{Accessibility, Observation},
+    generation::Generation,
+    input::Decoded,
     ipc,
     protocol::{BridgeEvent, Command, Results, UiEvent},
 };
 use anyhow::{Context, Result};
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc::SyncSender,
-    },
+    sync::{Arc, atomic::AtomicU64, mpsc::SyncSender},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -19,7 +16,6 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 use writy_core::{
-    buffer::TypingBuffer,
     config::Config,
     dictionary::Dictionary,
     linter::EnglishChecker,
@@ -64,18 +60,10 @@ pub fn start(config: Config, ui: SyncSender<UiEvent>, generation: Arc<AtomicU64>
 struct State {
     config: Config,
     ui: SyncSender<UiEvent>,
-    generation: Arc<AtomicU64>,
-    buffer: TypingBuffer,
-    decoder: Decoder,
+    generation: Generation,
     dictionary: Dictionary,
     checker: tokio::sync::watch::Sender<Option<TextSnapshot>>,
     access: Accessibility,
-    current: Option<TextSnapshot>,
-    anchor: Option<(u64, FieldSnapshot)>,
-    suggestions: Vec<Suggestion>,
-    entries: Vec<writy_core::types::LexicalEntry>,
-    translation: Option<(String, String)>,
-    notice: String,
     app: String,
     window: String,
     pid: u32,
@@ -85,14 +73,10 @@ struct State {
     secure: bool,
     locked: bool,
     bridge: Option<mpsc::Sender<serde_json::Value>>,
-    model: Option<tokio::task::JoinHandle<()>>,
     last_change: Instant,
-    local_revision: u64,
-    model_revision: u64,
     search: bool,
     hud_interacting: bool,
     selection: bool,
-    selection_position: Option<(i32, i32)>,
     inspecting: bool,
     access_status: String,
     checker_ready: bool,
@@ -108,33 +92,14 @@ impl State {
         self.clear_with_huds(false);
     }
     fn clear_with_huds(&mut self, preserve_huds: bool) {
-        self.buffer.reset();
-        self.decoder.reset();
-        self.current = None;
-        self.selection_position = None;
-        self.anchor = None;
-        self.suggestions.clear();
-        self.entries.clear();
-        self.translation = None;
-        self.notice.clear();
-        self.local_revision = u64::MAX;
-        self.model_revision = u64::MAX;
-        if let Some(task) = self.model.take() {
-            task.abort();
-        }
-        let g = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let _ = self.ui.try_send(UiEvent::Clear {
-            generation: g,
-            preserve_huds,
-        });
+        let clear = self.generation.invalidate(preserve_huds);
+        let _ = self.ui.try_send(clear);
     }
     fn invalidate_capture(&mut self, preserve_huds: bool) {
         if self.search {
             // Explicit search has its own input. Compositor clicks and keyboard
             // resets invalidate ambient editing anchors, not the search query.
-            self.buffer.reset();
-            self.decoder.reset();
-            self.anchor = None;
+            self.generation.discard_capture();
         } else {
             self.clear_with_huds(preserve_huds || self.hud_interacting);
         }
@@ -152,26 +117,28 @@ impl State {
         }
     }
     fn publish(&self) {
-        let Some(snapshot) = self.current.clone() else {
+        let Some(snapshot) = self.generation.current.clone() else {
             return;
         };
         let caret = self
+            .generation
             .selection_position
             .map(|(x, y)| (x, y, 0, 0))
             .or_else(|| {
-                self.anchor
+                self.generation
+                    .anchor
                     .as_ref()
                     .and_then(|(_, f)| f.rect.map(|r| (r.x, r.y, r.width, r.height)))
             });
         let _ = self.ui.try_send(UiEvent::Results(Box::new(Results {
             writing: !self.search && !self.selection,
             output_bounds: self.output_bounds,
-            generation: self.generation.load(Ordering::SeqCst),
+            generation: self.generation.id(),
             snapshot,
-            entries: self.entries.clone(),
-            suggestions: self.suggestions.clone(),
-            translation: self.translation.clone(),
-            status: self.notice.clone(),
+            entries: self.generation.entries.clone(),
+            suggestions: self.generation.suggestions.clone(),
+            translation: self.generation.translation.clone(),
+            status: self.generation.notice.clone(),
             caret,
             output: self.output.clone(),
         })));
@@ -184,7 +151,7 @@ impl State {
         let access = self.access.clone();
         let pid = self.pid;
         let epoch = self.epoch;
-        let revision = self.current.as_ref().map(|s| s.revision);
+        let revision = self.generation.current.as_ref().map(|s| s.revision);
         let tx = tx.clone();
         tokio::spawn(async move {
             let observation = access.inspect(pid).await;
@@ -208,7 +175,7 @@ impl State {
         if observation.field.is_some() {
             self.secure = false;
         }
-        if let (Some(current), Some(field)) = (&mut self.current, observation.field) {
+        if let (Some(current), Some(field)) = (&mut self.generation.current, observation.field) {
             let prefix: String = field.text.chars().take(field.caret).collect();
             if revision == Some(current.revision)
                 && !current.text.is_empty()
@@ -217,41 +184,39 @@ impl State {
                 && !self.selection
             {
                 current.confidence = Confidence::Verified;
-                self.anchor = Some((current.revision, field));
-                for suggestion in &mut self.suggestions {
+                self.generation.anchor = Some((current.revision, field));
+                for suggestion in &mut self.generation.suggestions {
                     if suggestion.snapshot.same_context(current) {
                         suggestion.snapshot.confidence = Confidence::Verified;
                     }
                 }
             } else if revision == Some(current.revision) {
-                self.anchor = None;
+                self.generation.anchor = None;
             }
         }
         self.capture_lease();
     }
     fn request(&mut self, capability: Capability, tx: &mpsc::Sender<Event>) {
-        if let Some(task) = self.model.take() {
-            task.abort();
-        }
-        let Some(snapshot) = self.current.clone() else {
+        self.generation.cancel_model();
+        let Some(snapshot) = self.generation.current.clone() else {
             return;
         };
         let service = match ModelService::new(self.config.clone()) {
             Ok(s) => s,
             Err(_) => {
-                self.notice = "Invalid model configuration".into();
+                self.generation.notice = "Invalid model configuration".into();
                 self.publish();
                 return;
             }
         };
-        self.model_revision = snapshot.revision;
-        let generation = self.generation.load(Ordering::SeqCst);
+        self.generation.model_revision = snapshot.revision;
+        let generation = self.generation.id();
         let tx = tx.clone();
-        self.model = Some(tokio::spawn(async move {
+        self.generation.model = Some(tokio::spawn(async move {
             let result = service.generate(snapshot, capability).await;
             let _ = tx.send(Event::Model(generation, result)).await;
         }));
-        self.notice = "Generating…".into();
+        self.generation.notice = "Generating…".into();
         self.publish();
     }
     async fn query(
@@ -261,18 +226,19 @@ impl State {
         selection: bool,
         tx: &mpsc::Sender<Event>,
     ) {
-        self.clear();
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            self.clear();
+            return;
+        }
+        self.clear_with_huds(true);
         self.selection = selection;
-        self.selection_position = if selection {
+        self.generation.selection_position = if selection {
             cursor_position().await
         } else {
             None
         };
-        let text = text.trim().to_owned();
-        if text.is_empty() {
-            return;
-        }
-        let revision = self.generation.load(Ordering::SeqCst);
+        let revision = self.generation.id();
         let snapshot = TextSnapshot {
             source: if selection { "selection" } else { "search" }.into(),
             focus_epoch: self.epoch,
@@ -281,18 +247,20 @@ impl State {
             text,
             confidence: Confidence::Projected,
         };
-        self.entries = self.dictionary.lookup(&snapshot.text).unwrap_or_default();
-        self.current = Some(snapshot.clone());
+        self.generation.entries = self.dictionary.lookup(&snapshot.text).unwrap_or_default();
+        self.generation.current = Some(snapshot.clone());
         if !translate && !selection {
             self.checker.send_replace(Some(snapshot.clone()));
         }
-        self.notice = if self.entries.is_empty() {
+        self.generation.notice = if self.generation.entries.is_empty() {
             "No local entry. Install dictionaries in Settings or use model translation.".into()
         } else {
             String::new()
         };
-        self.publish();
-        if translate || snapshot.text.split_whitespace().count() > 1 || self.entries.is_empty() {
+        if translate
+            || snapshot.text.split_whitespace().count() > 1
+            || self.generation.entries.is_empty()
+        {
             self.request(
                 if translate || selection {
                     Capability::Translate
@@ -301,6 +269,8 @@ impl State {
                 },
                 tx,
             );
+        } else {
+            self.publish();
         }
     }
     async fn command(&mut self, cmd: Command, tx: &mpsc::Sender<Event>) -> String {
@@ -312,8 +282,8 @@ impl State {
         }
         match cmd {
             Command::HudInteraction { active } => { self.hud_interacting = active; },
-            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"offline":self.config.offline,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.buffer.snapshot().text.chars().count(),"revision":self.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.entries.len(),"checker_ready":self.checker_ready,"verified":self.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
-            Command::Search=>{let query=self.current.as_ref().map(|s|s.text.clone());self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
+            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"offline":self.config.offline,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
+            Command::Search=>{let query=self.generation.current.as_ref().map(|s|s.text.clone());self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
             Command::Settings=>{let _=self.ui.try_send(UiEvent::Settings);}
             Command::Lookup{text}=>{self.search=false;self.query(text,true,true,tx).await;}
             Command::Query{text,translate}=>{self.search=true;self.query(text,translate,false,tx).await;}
@@ -327,14 +297,14 @@ impl State {
             Command::Offline{enabled}=>{self.config.offline=enabled;self.clear();}
             Command::Reload=>match Config::load(){Ok(c)=>{self.config=c;self.clear();self.capture_lease();},Err(_)=>return "invalid configuration".into()},
             Command::Copy=>{
-                let text=self.suggestions.first().and_then(Suggestion::replaced_text).or_else(||self.translation.as_ref().map(|t|t.0.clone())).or_else(||self.entries.iter().flat_map(|e|&e.senses).flat_map(|s|&s.translations).next().cloned());
+                let text=self.generation.suggestions.first().and_then(Suggestion::replaced_text).or_else(||self.generation.translation.as_ref().map(|t|t.0.clone())).or_else(||self.generation.entries.iter().flat_map(|e|&e.senses).flat_map(|s|&s.translations).next().cloned());
                 if let Some(text)=text {let _=self.ui.try_send(UiEvent::Copy(text));}
             }
             Command::Accept=>{
-                let Some(s)=self.suggestions.first().cloned()else{return "no suggestion".into();};
-                let Some(current)=&self.current else{return "no current context".into();};
+                let Some(s)=self.generation.suggestions.first().cloned()else{return "no suggestion".into();};
+                let Some(current)=&self.generation.current else{return "no current context".into();};
                 if !s.matches(current)||current.confidence!=Confidence::Verified {return "Text range is unverified; use Copy".into();}
-                let Some((revision,field))=self.anchor.clone()else{return "Text range is unverified; use Copy".into();};
+                let Some((revision,field))=self.generation.anchor.clone()else{return "Text range is unverified; use Copy".into();};
                 if revision!=current.revision{return "Suggestion is stale".into();}
                 match self.access.verify_replace(self.pid,s,field).await {
                     Ok(())=>{self.clear();return "applied".into();}
@@ -405,12 +375,13 @@ impl State {
                     self.clear();
                 }
                 self.epoch = focus_epoch;
-                self.buffer
+                self.generation
+                    .buffer
                     .focus(format!("{}:{}", self.app, self.window), self.epoch);
                 self.inspect(tx);
             }
             BridgeEvent::Keymap { device, keymap, .. } => {
-                self.decoder.keymap(device, keymap);
+                self.generation.decoder.keymap(device, keymap);
                 self.invalidate_capture(false);
                 self.capture_lease();
             }
@@ -422,6 +393,7 @@ impl State {
                 group,
                 ..
             } => self
+                .generation
                 .decoder
                 .modifiers(&device, depressed, latched, locked, group),
             BridgeEvent::Reset {
@@ -430,7 +402,10 @@ impl State {
                 ..
             } => {
                 self.epoch = focus_epoch;
-                self.invalidate_capture(matches!(reason.as_str(), "focus" | "window" | "shortcut"));
+                self.invalidate_capture(matches!(
+                    reason.as_str(),
+                    "focus" | "window" | "shortcut" | "navigation"
+                ));
                 self.inspect(tx);
                 self.capture_lease();
             }
@@ -444,32 +419,19 @@ impl State {
                 if focus_epoch != self.epoch || !self.allowed() {
                     return;
                 }
-                match self.decoder.key(&device, keycode, state) {
+                match self.generation.decoder.key(&device, keycode, state) {
                     Decoded::Text(text) => {
                         if self.selection {
                             self.clear();
                             self.selection = false;
                         }
-                        if let Some(task) = self.model.take() {
-                            task.abort();
-                        }
-                        self.buffer.push(&text);
-                        self.current = Some(self.buffer.snapshot());
-                        self.suggestions.clear();
-                        self.entries.clear();
-                        self.notice.clear();
-                        self.translation = None;
-                        self.anchor = None;
+                        let clear = self.generation.type_text(&text);
                         self.last_change = Instant::now();
-                        // A stale visible result is invalidated immediately, even if the UI queue is full.
-                        let g = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-                        let _ = self.ui.try_send(UiEvent::Clear {
-                            generation: g,
-                            preserve_huds: false,
-                        });
+                        let _ = self.ui.try_send(clear);
+                        self.publish();
                     }
                     Decoded::Reset => {
-                        self.clear();
+                        self.clear_with_huds(true);
                         self.capture_lease();
                     }
                     Decoded::Ignore => {}
@@ -550,22 +512,14 @@ async fn run(
     } else {
         None
     };
-    let dictionary = Dictionary::open(ipc::database_path())?;
+    let dictionary = ipc::open_dictionary()?;
     let mut s = State {
         config,
         ui,
-        generation,
-        buffer: TypingBuffer::default(),
-        decoder: Decoder::default(),
+        generation: Generation::new(generation),
         dictionary,
         checker: start_checker(events.clone()),
         access: Accessibility::start(),
-        current: None,
-        anchor: None,
-        suggestions: vec![],
-        entries: vec![],
-        translation: None,
-        notice: String::new(),
         app: String::new(),
         window: String::new(),
         pid: 0,
@@ -575,14 +529,10 @@ async fn run(
         secure: false,
         locked: false,
         bridge: None,
-        model: None,
         last_change: Instant::now(),
-        local_revision: u64::MAX,
-        model_revision: u64::MAX,
         search: false,
         hud_interacting: false,
         selection: false,
-        selection_position: None,
         inspecting: false,
         access_status: String::new(),
         checker_ready: false,
@@ -604,55 +554,53 @@ async fn run(
                 Event::Observation{epoch,revision,observation}=>{s.inspecting=false;if epoch==s.epoch{s.observation(observation,revision);}}
                 Event::CheckerReady=>{s.checker_ready=true;}
                 Event::Checked(snapshot, suggestions)=>{
-                    if s.current.as_ref().is_some_and(|c|c.same_context(&snapshot)) {
-                        s.suggestions.retain(|s|matches!(s.kind,SuggestionKind::Rewrite|SuggestionKind::Completion));
-                        s.suggestions.extend(suggestions);s.publish();
+                    if s.generation.current.as_ref().is_some_and(|c|c.same_context(&snapshot)) {
+                        s.generation.suggestions.retain(|s|matches!(s.kind,SuggestionKind::Rewrite|SuggestionKind::Completion));
+                        s.generation.suggestions.extend(suggestions);s.publish();
                     }
                 }
                 Event::Model(g,result)=>{
-                    if g!=s.generation.load(Ordering::SeqCst){continue;}
+                    if g!=s.generation.id(){continue;}
                     match result {
-                        Ok(result)=>if s.current.as_ref().is_some_and(|c|c.same_context(&result.snapshot)) {
-                            s.notice=result.notice.unwrap_or_default();
+                        Ok(result)=>if s.generation.current.as_ref().is_some_and(|c|c.same_context(&result.snapshot)) {
+                            s.generation.notice=result.notice.unwrap_or_default();
                             match result.capability {
                                 Capability::WritingAssistance=>match WritingAssistance::parse(&result.text) {
                                     Ok(assistance)=>{
-                                        let snapshot=s.current.clone().unwrap_or(result.snapshot);
-                                        let entry=generated_lexical_entry(&snapshot,&s.entries,&assistance,&result.provider);
-                                        s.entries.push(entry);
-                                        s.translation=Some((assistance.translation,result.provider.clone()));
+                                        let snapshot=s.generation.current.clone().unwrap_or(result.snapshot);
+                                        let entry=generated_lexical_entry(&snapshot,&s.generation.entries,&assistance,&result.provider);
+                                        s.generation.entries.push(entry);
+                                        s.generation.translation=Some((assistance.translation,result.provider.clone()));
                                         if snapshot.text.split_whitespace().count()>=s.config.typing.min_rephrase_words { s.request(Capability::Rewrite,&events); }
                                     }
-                                    Err(error)=>s.notice=error.to_string(),
+                                    Err(error)=>s.generation.notice=error.to_string(),
                                 },
-                                Capability::Translate=>s.translation=Some((result.text,result.provider)),
+                                Capability::Translate=>s.generation.translation=Some((result.text,result.provider)),
                                 Capability::Rewrite=>{
                                     let end=result.snapshot.text.chars().count();
-                                    s.suggestions.insert(0,Suggestion{snapshot:s.current.clone().unwrap_or(result.snapshot),start:0,end,replacement:result.text,description:"Natural phrasing".into(),kind:SuggestionKind::Rewrite,provider:result.provider});
+                                    s.generation.suggestions.insert(0,Suggestion{snapshot:s.generation.current.clone().unwrap_or(result.snapshot),start:0,end,replacement:result.text,description:"Natural phrasing".into(),kind:SuggestionKind::Rewrite,provider:result.provider});
                                 }
                             } s.publish();
                         },
-                        Err(e)=>{s.notice=e.to_string();s.publish();}
+                        Err(e)=>{s.generation.notice=e.to_string();s.publish();}
                     }
                 }
             },
             _=heartbeat.tick()=>{s.inspect(&events);s.capture_lease();if let Some(w)=watcher.as_mut()&& w.try_wait().ok().flatten().is_some(){watcher=None;let _=s.ui.try_send(UiEvent::Notice("Automatic selection watching is unavailable; use the selection shortcut".into()));}}
             _=tick.tick()=>{
                 if s.search||s.selection||!s.allowed(){continue;}
-                let Some(current)=s.current.clone()else{continue;};if current.text.trim().is_empty(){continue;}
-                if s.local_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(60){
-                    s.inspect(&events);let Some(current)=s.current.clone()else{continue;};s.local_revision=current.revision;s.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.checker.send_replace(Some(current.clone()));
+                let Some(current)=s.generation.current.clone()else{continue;};if current.text.trim().is_empty(){continue;}
+                if s.generation.local_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(60){
+                    s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.checker.send_replace(Some(current.clone()));
                     let prefix=current.text.split_whitespace().last().unwrap_or("");
                     if prefix.chars().count()>=2&&!current.text.ends_with(char::is_whitespace)
-                        && let Ok(words)=s.dictionary.complete(prefix,3){for word in words {if word!=prefix{s.suggestions.push(Suggestion{snapshot:current.clone(),start:current.text.chars().count()-prefix.chars().count(),end:current.text.chars().count(),replacement:word,description:"Word completion".into(),kind:SuggestionKind::Completion,provider:"Local dictionary".into()});}}} s.publish();
+                        && let Ok(words)=s.dictionary.complete(prefix,3){for word in words {if word!=prefix{s.generation.suggestions.push(Suggestion{snapshot:current.clone(),start:current.text.chars().count()-prefix.chars().count(),end:current.text.chars().count(),replacement:word,description:"Word completion".into(),kind:SuggestionKind::Completion,provider:"Local dictionary".into()});}}} s.publish();
                 }
-                if s.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
+                if s.generation.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
             }
         }
     }
-    if let Some(task) = s.model {
-        task.abort();
-    }
+    s.generation.cancel_model();
     Ok(())
 }
 fn start_checker(events: mpsc::Sender<Event>) -> tokio::sync::watch::Sender<Option<TextSnapshot>> {
@@ -795,6 +743,8 @@ fn sentence_ready(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+    use writy_core::buffer::TypingBuffer;
     #[tokio::test]
     async fn clicking_search_does_not_clear_results_or_cancel_generation() {
         let (ui, _ui_events) = std::sync::mpsc::sync_channel(32);
@@ -802,18 +752,10 @@ mod tests {
         let mut state = State {
             config: Config::default(),
             ui,
-            generation: generation.clone(),
-            buffer: TypingBuffer::default(),
-            decoder: Decoder::default(),
+            generation: Generation::new(generation.clone()),
             dictionary: Dictionary::open(":memory:").unwrap(),
             checker: tokio::sync::watch::channel(None).0,
             access: Accessibility::start(),
-            current: None,
-            anchor: None,
-            suggestions: vec![],
-            entries: vec![],
-            translation: None,
-            notice: String::new(),
             app: String::new(),
             window: String::new(),
             pid: 0,
@@ -823,14 +765,10 @@ mod tests {
             secure: false,
             locked: false,
             bridge: None,
-            model: None,
             last_change: Instant::now(),
-            local_revision: u64::MAX,
-            model_revision: u64::MAX,
             search: false,
             hud_interacting: false,
             selection: false,
-            selection_position: None,
             inspecting: false,
             access_status: String::new(),
             checker_ready: false,
@@ -841,9 +779,9 @@ mod tests {
         state.search = true;
         let mut buffer = TypingBuffer::default();
         buffer.push("change");
-        state.current = Some(buffer.snapshot());
-        state.translation = Some(("تغيير".into(), "fixture".into()));
-        state.model = Some(tokio::spawn(std::future::pending()));
+        state.generation.current = Some(buffer.snapshot());
+        state.generation.translation = Some(("تغيير".into(), "fixture".into()));
+        state.generation.model = Some(tokio::spawn(std::future::pending()));
         let (events, _rx) = mpsc::channel(32);
         state
             .bridge_event(
@@ -856,15 +794,15 @@ mod tests {
             )
             .await;
         assert_eq!(
-            state.current.as_ref().map(|s| s.text.as_str()),
+            state.generation.current.as_ref().map(|s| s.text.as_str()),
             Some("change")
         );
         assert_eq!(
-            state.translation.as_ref().map(|t| t.0.as_str()),
+            state.generation.translation.as_ref().map(|t| t.0.as_str()),
             Some("تغيير")
         );
         assert_eq!(generation.load(Ordering::SeqCst), 7);
-        assert!(state.model.is_some());
+        assert!(state.generation.model.is_some());
         state
             .bridge_event(
                 BridgeEvent::Focus {
@@ -882,12 +820,12 @@ mod tests {
             .await;
         assert!(state.search);
         assert_eq!(
-            state.current.as_ref().map(|s| s.text.as_str()),
+            state.generation.current.as_ref().map(|s| s.text.as_str()),
             Some("change")
         );
         state.clear();
-        assert!(state.current.is_none());
-        assert!(state.translation.is_none());
+        assert!(state.generation.current.is_none());
+        assert!(state.generation.translation.is_none());
     }
     #[tokio::test]
     async fn selecting_hud_text_preserves_panels_and_ignores_self_lookup() {
@@ -896,18 +834,10 @@ mod tests {
         let mut state = State {
             config: Config::default(),
             ui,
-            generation: generation.clone(),
-            buffer: TypingBuffer::default(),
-            decoder: Decoder::default(),
+            generation: Generation::new(generation.clone()),
             dictionary: Dictionary::open(":memory:").unwrap(),
             checker: tokio::sync::watch::channel(None).0,
             access: Accessibility::start(),
-            current: None,
-            anchor: None,
-            suggestions: vec![],
-            entries: vec![],
-            translation: None,
-            notice: String::new(),
             app: String::new(),
             window: String::new(),
             pid: 0,
@@ -917,14 +847,10 @@ mod tests {
             secure: false,
             locked: false,
             bridge: None,
-            model: None,
             last_change: Instant::now(),
-            local_revision: u64::MAX,
-            model_revision: u64::MAX,
             search: false,
             hud_interacting: false,
             selection: false,
-            selection_position: None,
             inspecting: false,
             access_status: String::new(),
             checker_ready: false,
@@ -967,6 +893,81 @@ mod tests {
         );
         assert_eq!(generation.load(Ordering::SeqCst), before);
         assert!(!state.selection);
+
+        // Ordinary typing and deletion invalidate edits without unmapping the HUD.
+        state.hud_interacting = false;
+        state.app = "org.example.Editor".into();
+        let context = xkbcommon::xkb::Context::new(xkbcommon::xkb::CONTEXT_NO_FLAGS);
+        let map = xkbcommon::xkb::Keymap::new_from_names(
+            &context,
+            "",
+            "",
+            "us",
+            "",
+            None,
+            xkbcommon::xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .unwrap();
+        assert!(state.generation.decoder.keymap(
+            "fixture".into(),
+            map.get_as_string(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1)
+        ));
+        for keycode in [30, 14] {
+            for _ in _ui_events.try_iter() {}
+            state
+                .bridge_event(
+                    BridgeEvent::Key {
+                        device: "fixture".into(),
+                        keycode,
+                        state: 1,
+                        focus_epoch: state.epoch,
+                        seq: state.seq + 1,
+                    },
+                    &events,
+                )
+                .await;
+            let events: Vec<_> = _ui_events.try_iter().collect();
+            assert!(events.iter().any(|event| matches!(
+                event,
+                UiEvent::Clear {
+                    preserve_huds: true,
+                    ..
+                }
+            )));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                UiEvent::Clear {
+                    preserve_huds: false,
+                    ..
+                }
+            )));
+            assert!(state.generation.anchor.is_none());
+        }
+        state.config.model.ollama_url = "http://127.0.0.1:9".into();
+        for _ in _ui_events.try_iter() {}
+        let passage = "I will attend the meeting tomorrow.\nPlease send the agenda.";
+        state
+            .command(
+                Command::Selection {
+                    text: Some(passage.into()),
+                },
+                &events,
+            )
+            .await;
+        state.generation.model.take().unwrap().abort();
+        assert!(state.selection);
+        assert_eq!(state.generation.current.as_ref().unwrap().text, passage);
+        let published: Vec<_> = _ui_events.try_iter().collect();
+        assert!(published.iter().any(|event| matches!(event,
+            UiEvent::Results(result) if result.snapshot.text == passage && result.status == "Generating…"
+        )));
+        assert!(!published.iter().any(|event| matches!(
+            event,
+            UiEvent::Clear {
+                preserve_huds: false,
+                ..
+            }
+        )));
     }
     #[test]
     fn automatic_model_waits_for_a_final_dot() {

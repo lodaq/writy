@@ -1,8 +1,10 @@
 mod accessibility;
 mod backend;
+mod generation;
 mod input;
 mod ipc;
 mod protocol;
+mod reading_result;
 mod ui;
 
 use anyhow::{Context, Result, ensure};
@@ -10,8 +12,8 @@ use clap::{Parser, Subcommand};
 use protocol::Command;
 use std::{io::Read, path::PathBuf};
 use writy_core::{
-    config::{Config, data_dir},
-    dictionary::{Dictionary, OpenPack, download_open_pack},
+    config::Config,
+    dictionary::{CATALOGUE, DictionaryLibrary},
     types::{Attribution, Language},
 };
 
@@ -186,7 +188,7 @@ fn run() -> Result<()> {
             };
             ensure!(!text.trim().is_empty(), "provide text or --selection");
             if json {
-                let dictionary = Dictionary::open(ipc::database_path())?;
+                let dictionary = ipc::open_dictionary()?;
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&dictionary.lookup(&text)?)?
@@ -247,9 +249,10 @@ fn read_stdin() -> Result<String> {
 async fn dictionary_action(action: DictAction) -> Result<()> {
     let path = ipc::database_path();
     ipc::ensure_parent(&path)?;
+    let mut dictionary = ipc::open_dictionary()?;
     match action {
         DictAction::List => {
-            for state in Dictionary::open(path)?.source_states()? {
+            for state in dictionary.source_states()? {
                 let source = state.attribution;
                 let count = state.entries;
                 println!(
@@ -286,7 +289,6 @@ async fn dictionary_action(action: DictAction) -> Result<()> {
                 url,
                 license,
             };
-            let mut dictionary = Dictionary::open(path)?;
             let count = if source_path.extension().is_some_and(|e| e == "ifo") {
                 if bilingual {
                     dictionary.import_bilingual_stardict(&source_path, language, source)?
@@ -303,19 +305,15 @@ async fn dictionary_action(action: DictAction) -> Result<()> {
             println!("Imported {count} entries");
         }
         DictAction::Install { pack } => {
-            let packs = match pack.as_str() {
-                "en-ar" => vec![OpenPack::EnglishArabic],
-                "ar-en" => vec![OpenPack::ArabicEnglish],
-                _ => vec![OpenPack::EnglishArabic, OpenPack::ArabicEnglish],
-            };
-            for pack in packs {
-                let ifo = download_open_pack(pack, &data_dir().join("packs")).await?;
-                let count = Dictionary::open(&path)?.import_bilingual_stardict(
-                    &ifo,
-                    pack.language(),
-                    pack.source(),
-                )?;
-                println!("Installed {}: {count} entries", pack.id());
+            let library = DictionaryLibrary::new(ipc::database_path());
+            for entry in CATALOGUE.iter().filter(|entry| {
+                entry.open_pack().is_some() && (pack == "both" || entry.pack == pack)
+            }) {
+                let count = library.install(entry, || {}).await?;
+                println!(
+                    "Installed {}: {count} entries",
+                    entry.open_pack().unwrap().id()
+                );
             }
         }
     }

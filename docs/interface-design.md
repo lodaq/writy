@@ -9,8 +9,8 @@ navigation. The intended feeling is calm, immediate and predictable.
 - Search: one primary lookup action, a separate translation action, labelled
   multiline input, and a scrollable result collection. Copy is unavailable until
   a result exists. Welcome, generating and no-result states explain the next step.
-- Results: category and copy action share a header; readable selectable content
-  follows, then attribution. Copy confirmation stays on the control that caused it.
+- Results: category and copy action share a header; source headings organize
+  readable, selectable entries. Copy confirmation stays on the control that caused it.
   Status messages are never offered as copyable writing suggestions.
 - Floating panels: seven logical categories use tabs in a fixed-size reading
   surface. Each page scrolls independently while the draggable header, tab strip
@@ -27,13 +27,22 @@ navigation. The intended feeling is calm, immediate and predictable.
   dismissal still clear stale results. During Flameshot capture, the HUD moves
   below the fullscreen annotation surface; screenshot annotations and selections
   are excluded from automatic writing capture.
-- Settings: privacy, models, floating panels and dictionaries form named groups.
+- Settings: General, Models, Panels and Dictionaries are native tabs, each with
+  its own scrolling page. Binary preferences use labelled switches in aligned rows.
   Installed model choices and cloud configuration are disclosed on demand.
   Save and operation feedback remain outside the scrolling form. Reopening settings
-  presents the existing window. Escape dismisses the window.
+  presents the existing window and retains unsaved edits during the session.
+  Escape dismisses the window. Dictionary switches save immediately; other
+  preferences use Save settings.
+- Dictionary library: Downloaded and Explore have distinct headings; descriptions,
+  installation state and source links stay beside their dictionary. Download is a
+  quiet tinted action, Remove uses the theme's destructive colour, and actions
+  wrap into additional rows when the window or font requires it.
 - Controls: immediate native press feedback, a visible keyboard focus ring,
   semantic theme colours and explicit disabled states. Text and labels wrap
-  within narrow containers; input direction follows English or Arabic.
+  within narrow containers; input direction follows English or Arabic. Category
+  captions stay on one line with readable minimum widths, native overflow arrows
+  and full-name tooltips. Source attribution is selectable in its reading page.
 
 ## Native accessibility and materials
 
@@ -46,6 +55,16 @@ instantaneous and do not move content across the screen. Pointer press feedback
 uses scale .97 over 160ms with cubic-bezier(0.23, 1, 0.32, 1); Copy confirms with
 a 125ms native icon crossfade. gtk-enable-animations=false removes the transform
 and crossfade while retaining static colour/icon feedback.
+
+All surfaces share the approved search reference's neutral materials, blue
+accent, rounded controls and source hierarchy. Search keeps its larger reading
+scale; preferences and floating panels use a denser desktop scale. Native window
+controls, focus navigation, tabs, dropdowns and switches remain native GTK.
+This adapts Apple HIG [Settings › Best practices](https://developer.apple.com/design/human-interface-guidelines/settings),
+[Tab views › Best practices](https://developer.apple.com/design/human-interface-guidelines/tab-views),
+and [Buttons › Style](https://developer.apple.com/design/human-interface-guidelines/buttons)
+to a Linux desktop: peer preferences stay discoverable, secondary actions stay
+quiet, and every page supports larger text without losing its controls.
 
 ## Verification
 
@@ -95,3 +114,44 @@ reopening the modal reruns a retained query if there is no new input to seed it.
 Selection lookups sample the Hyprland pointer once, then place the reading HUD
 12 pixels beside it. Placement flips above/left and clamps to the output edges;
 model updates use the captured anchor rather than following pointer movement.
+
+## Source groups and live updates
+
+Each result tab groups rows by dictionary or model, with the source heading
+immediately above its content and a visible divider between sources. Headwords
+identify distinct entries in search, with part of speech beside them when supplied.
+Repeated senses under the same headword share a heading. Exact duplicate records
+within the same source, headword and part of speech are shown once; independent
+sources and distinct headwords remain separate. Copy contains the source text,
+without presentation numbers. Publisher markup is retained only where it maps to
+one definition exactly. Floating panels keep the query in their header.
+
+Search follows the supplied 1402 × 1122 reference: proportional side insets
+(20–80 logical pixels), an inline brand/language/settings header, broad lookup
+and translation buttons, and one bordered reading surface containing its tabs.
+The charcoal surface and blue primary action retain theme-aware text and a
+light appearance; typography scales with the desktop font. Narrow windows stack
+the header and actions, wrap text, and
+scroll the results; larger system fonts can also scroll the whole form rather than
+clip controls or the footer. Arabic headwords lead each RTL entry, with sense
+numbers at the right and multiline details together underneath. Arramooz's
+empty formatting lines are removed for display and adjacent verb attributes
+share a compact line; copying retains the original dictionary text. Pango handles
+logical text alignment: adding right justification to an RTL label would mirror
+its paragraph a second time and misplace it.
+
+This follows Apple HIG [Layout › Visual hierarchy](https://developer.apple.com/design/human-interface-guidelines/layout),
+[Typography › Conveying hierarchy](https://developer.apple.com/design/human-interface-guidelines/typography),
+and [Right to left › Text alignment](https://developer.apple.com/design/human-interface-guidelines/right-to-left),
+using GTK controls, installed fonts and semantic theme colors. Native GTK/Xvfb
+captures cover Arabic and English, dark and light themes, narrow layouts, larger
+text, scrolling and the existing copy/tab behavior.
+
+Typing, deletion and navigation invalidate correction anchors without hiding
+the reference window. Typed text refreshes the visible content immediately;
+unchanged groups preserve selection and scroll position. Explicit dismissal,
+secure fields and capture failures retain their existing hiding behavior.
+
+Selecting a word, sentence or passage opens the Translation tab immediately,
+including when no dictionary matches. A loading message stays visible until
+the full selected text is translated; model failures remain visible in that tab.

@@ -1,5 +1,7 @@
+use crate::reading_result::{CATEGORIES, DisplayText, Panel, SourceGroup, panels};
 use crate::{
     backend::Commands,
+    generation::DisplayGeneration,
     protocol::{Command, Results, UiEvent},
 };
 use gtk::{gdk, gio, glib, prelude::*};
@@ -15,7 +17,7 @@ use std::{
     },
     time::Duration,
 };
-use writy_core::{config::Config, types::SuggestionKind};
+use writy_core::config::Config;
 
 mod components;
 mod dictionaries;
@@ -24,15 +26,6 @@ mod settings;
 use components::{copy_button, empty_state, result_card, section};
 
 const CSS: &str = include_str!("ui.css");
-const CATEGORIES: [(&str, &str); 7] = [
-    ("translation", "Translation"),
-    ("suggestions", "Writing"),
-    ("definition", "Definition"),
-    ("collocations", "Collocations"),
-    ("examples", "Examples"),
-    ("synonyms", "Synonyms & antonyms"),
-    ("word_family", "Word family"),
-];
 fn layer_shell_supported() -> bool {
     // gtk-layer-shell only accepts Wayland displays; GTK can also select X11.
     gdk::Display::default().is_some_and(|display| {
@@ -47,6 +40,7 @@ fn label(text: &str, class: &str) -> gtk::Label {
     align_label(&l);
     l.connect_label_notify(align_label);
     l.set_wrap(true);
+    l.set_max_width_chars(76);
     l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     l.add_css_class(class);
     l
@@ -59,13 +53,14 @@ fn align_label(label: &gtk::Label) {
         0x0600..=0x06ff | 0x0750..=0x077f | 0x08a0..=0x08ff |
         0xfb50..=0xfdff | 0xfe70..=0xfeff | 0x1ee00..=0x1eeff)
     });
-    // GTK mirrors xalign in RTL: logical start is the physical right edge.
     label.set_xalign(0.);
-    label.set_justify(if arabic {
-        gtk::Justification::Right
+    if arabic {
+        label.add_css_class("writy-rtl");
     } else {
-        gtk::Justification::Left
-    });
+        label.remove_css_class("writy-rtl");
+    }
+    // Pango mirrors logical alignment for RTL; Right would flip it twice.
+    label.set_justify(gtk::Justification::Left);
     label.set_direction(if arabic {
         gtk::TextDirection::Rtl
     } else {
@@ -76,164 +71,6 @@ fn clipboard(text: &str) {
     if let Some(display) = gdk::Display::default() {
         display.clipboard().set_text(text);
     }
-}
-struct Panel {
-    category: &'static str,
-    title: &'static str,
-    body: String,
-    source: String,
-    copy_text: String,
-    markup: Option<String>,
-}
-fn panels(result: &Results) -> Vec<Panel> {
-    let mut content: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    let mut sources: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for entry in &result.entries {
-        for sense in &entry.senses {
-            for (key, values) in [
-                ("translation", &sense.translations),
-                ("definition", &sense.definitions),
-                ("examples", &sense.examples),
-                ("collocations", &sense.collocations),
-                ("word_family", &sense.word_family),
-                ("synonyms", &sense.synonyms),
-            ] {
-                if !values.is_empty() {
-                    content
-                        .entry(key)
-                        .or_default()
-                        .extend(values.iter().map(|t| {
-                            if key == "translation" {
-                                t.clone()
-                            } else {
-                                format!(
-                                    "{}{} · {}",
-                                    if entry.source.name.starts_with("AI-generated ·") {
-                                        "AI · "
-                                    } else {
-                                        ""
-                                    },
-                                    entry.headword,
-                                    t
-                                )
-                            }
-                        }));
-                    sources
-                        .entry(key)
-                        .or_default()
-                        .push(entry.source.name.clone());
-                }
-            }
-            content
-                .entry("synonyms")
-                .or_default()
-                .extend(sense.antonyms.iter().map(|t| {
-                    format!(
-                        "{}Opposite · {t}",
-                        if entry.source.name.starts_with("AI-generated ·") {
-                            "AI · "
-                        } else {
-                            ""
-                        }
-                    )
-                }));
-        }
-    }
-    if let Some((text, provider)) = &result.translation {
-        content
-            .entry("translation")
-            .or_default()
-            .insert(0, format!("AI · {text}"));
-        sources
-            .entry("translation")
-            .or_default()
-            .push(provider.clone());
-    }
-    for s in &result.suggestions {
-        let kind = match s.kind {
-            SuggestionKind::Rewrite => "AI phrase",
-            SuggestionKind::Spelling => "Spelling",
-            SuggestionKind::Grammar => "Grammar",
-            SuggestionKind::Completion => "Complete",
-        };
-        content
-            .entry("suggestions")
-            .or_default()
-            .push(format!("{kind} · {}", s.replacement));
-        sources
-            .entry("suggestions")
-            .or_default()
-            .push(s.provider.clone());
-    }
-    CATEGORIES
-        .into_iter()
-        .filter_map(|(key, title)| {
-            let rows = content.remove(key).unwrap_or_default();
-            if rows.is_empty() && result.writing {
-                return Some(Panel {
-                    category: key,
-                    title,
-                    body: if key == "suggestions" {
-                        if result.status == "Generating…" {
-                            "Checking your wording…".into()
-                        } else {
-                            "No writing suggestion".into()
-                        }
-                    } else {
-                        if result
-                            .entries
-                            .iter()
-                            .any(|entry| entry.source.name.starts_with("AI-generated ·"))
-                        {
-                            "Not available for this word".into()
-                        } else if result.status == "Generating…" {
-                            "Generating AI details…".into()
-                        } else {
-                            "No dictionary data for this word".into()
-                        }
-                    },
-                    source: String::new(),
-                    copy_text: String::new(),
-                    markup: None,
-                });
-            }
-            if rows.is_empty() {
-                return None;
-            }
-            let mut source = sources.remove(key).unwrap_or_default();
-            source.sort();
-            source.dedup();
-            Some(Panel {
-                category: key,
-                title,
-                markup: if key == "definition" && result.entries.len() == 1 {
-                    result.entries[0].definition_markup.as_ref().map(|m| {
-                        format!(
-                            "<b>{}</b> · {m}",
-                            glib::markup_escape_text(&result.entries[0].headword)
-                        )
-                    })
-                } else {
-                    None
-                },
-                copy_text: match key {
-                    "translation" => result
-                        .translation
-                        .as_ref()
-                        .map(|t| t.0.clone())
-                        .unwrap_or_else(|| rows[0].clone()),
-                    "suggestions" => result
-                        .suggestions
-                        .first()
-                        .and_then(writy_core::types::Suggestion::replaced_text)
-                        .unwrap_or_default(),
-                    _ => rows.join("\n"),
-                },
-                body: rows.join("\n"),
-                source: source.join(" · "),
-            })
-        })
-        .collect()
 }
 struct View {
     app: gtk::Application,
@@ -250,7 +87,7 @@ struct View {
     content: gtk::Stack,
     empty: gtk::Box,
     hud: hud::HudStack,
-    last_generation: u64,
+    generation: DisplayGeneration,
     last_result: Option<Results>,
     layout_monitor: Option<gdk::Monitor>,
     layout_bounds: Option<(i32, i32, i32, i32)>,
@@ -269,33 +106,42 @@ impl View {
         let search = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Writy — English ↔ العربية")
-            .default_width(680)
-            .default_height(760)
+            .default_width(1200)
+            .default_height(960)
             .build();
         search.add_css_class("writy-main");
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 24);
         root.set_margin_top(24);
-        root.set_margin_bottom(20);
-        root.set_margin_start(24);
-        root.set_margin_end(24);
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        root.set_margin_bottom(48);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        header.add_css_class("writy-search-header");
+        header.set_margin_bottom(8);
         let name = label("Writy", "writy-header");
+        name.set_wrap(false);
         name.set_hexpand(true);
         header.append(&name);
+        let languages = label(
+            "English ↔ العربية  ·  Read, translate, write naturally",
+            "writy-meta",
+        );
+        languages.set_direction(gtk::TextDirection::Ltr);
+        languages.set_hexpand(true);
+        let header_details = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        header_details.set_hexpand(false);
+        header_details.append(&languages);
         let toolbar = gtk::HeaderBar::new();
         toolbar.add_css_class("writy-toolbar");
+        toolbar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
         let settings = gtk::Button::from_icon_name("emblem-system-symbolic");
         settings.set_tooltip_text(Some("Settings"));
         settings.update_property(&[gtk::accessible::Property::Label("Settings")]);
         let stx = tx.clone();
         settings.connect_clicked(move |_| send(&stx, Command::Settings));
-        toolbar.pack_end(&settings);
+        header_details.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        header_details.append(&settings);
+        header.append(&header_details);
         search.set_titlebar(Some(&toolbar));
         root.append(&header);
-        root.append(&label(
-            "English ↔ العربية   ·   Read, translate, write naturally",
-            "writy-meta",
-        ));
         let editor = gtk::TextView::new();
         editor.set_wrap_mode(gtk::WrapMode::WordChar);
         editor.add_css_class("writy-query");
@@ -309,16 +155,15 @@ impl View {
             .build();
         input_scroll.add_css_class("writy-input");
         editor.update_property(&[gtk::accessible::Property::Label("Word or sentence")]);
-        root.append(&label("Word or sentence", "writy-title"));
-        root.append(&input_scroll);
-        let actions = gtk::FlowBox::new();
-        actions.set_selection_mode(gtk::SelectionMode::None);
-        actions.set_min_children_per_line(1);
-        actions.set_max_children_per_line(3);
-        actions.set_row_spacing(8);
-        actions.set_column_spacing(8);
+        let input = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        input.append(&label("Word or sentence", "writy-title"));
+        input.append(&input_scroll);
+        root.append(&input);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        actions.add_css_class("writy-search-actions");
         for (name, translate) in [("Look up or improve", false), ("Translate", true)] {
-            let b = gtk::Button::with_label(name);
+            let b = components::action_button(name);
+            b.set_hexpand(true);
             if !translate {
                 b.add_css_class("suggested-action");
             }
@@ -342,13 +187,17 @@ impl View {
                     .to_string();
                 send(&tx, Command::Query { text, translate });
             });
-            actions.insert(&b, -1);
+            actions.append(&b);
         }
         let search_copy_text = Rc::new(RefCell::new(String::new()));
         let copy = copy_button(search_copy_text.clone(), "Copy result");
+        copy.set_halign(gtk::Align::Fill);
         copy.set_sensitive(false);
-        actions.insert(&copy, -1);
-        root.append(&actions);
+        actions.append(&copy);
+        let controls = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        controls.set_margin_bottom(16);
+        controls.append(&actions);
+        root.append(&controls);
         let status = label(
             "Type a word or sentence. Local dictionaries work without a network.",
             "writy-status",
@@ -356,14 +205,22 @@ impl View {
         let copy_status = status.clone();
         copy.connect_clicked(move |_| copy_status.set_text("Copied to clipboard"));
         let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        status_row.add_css_class("writy-search-status");
         let activity = gtk::Spinner::new();
         activity.set_visible(false);
         status_row.append(&activity);
         status_row.append(&status);
-        root.append(&status_row);
+        controls.append(&status_row);
+        let weak_status_row = status_row.downgrade();
+        status.connect_label_notify(move |status| {
+            if let Some(row) = weak_status_row.upgrade() {
+                row.set_visible(!status.text().is_empty());
+            }
+        });
         let results = gtk::Notebook::new();
         results.set_scrollable(true);
         results.set_vexpand(true);
+        results.set_size_request(-1, 220);
         results.add_css_class("writy-result-tabs");
         let tab_copy_texts = Rc::new(RefCell::new(Vec::<String>::new()));
         let texts = tab_copy_texts.clone();
@@ -395,7 +252,15 @@ impl View {
             "Enter copies the result · Shift+Enter adds a line · Esc closes",
             "writy-meta",
         ));
-        search.set_child(Some(&root));
+        let column = components::ReadingColumn::new(root.upcast_ref(), &actions, &header);
+        column.set_vexpand(true);
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .child(&column)
+            .build();
+        scroll.set_overlay_scrolling(false);
+        search.set_child(Some(&scroll));
         let txclose = tx.clone();
         search.connect_close_request(move |w| {
             w.set_visible(false);
@@ -468,11 +333,51 @@ impl View {
             content,
             empty,
             hud,
-            last_generation: 0,
+            generation: DisplayGeneration::default(),
             last_result: None,
             layout_monitor: None,
             layout_bounds: None,
         }))
+    }
+    fn open_search(&self, fallback: Option<String>) {
+        let editor = self.editor.clone();
+        let search = self.search.clone();
+        let tx = self.tx.clone();
+        self.hud.window.set_visible(false);
+        glib::MainContext::default().spawn_local(async move {
+            let display = gtk::prelude::WidgetExt::display(&search);
+            let mut query = fallback;
+            // Read PRIMARY before presenting the window changes keyboard focus.
+            for clipboard in [display.primary_clipboard(), display.clipboard()] {
+                if let Ok(Ok(Some(text))) =
+                    glib::future_with_timeout(Duration::from_secs(1), clipboard.read_text_future())
+                        .await
+                    && !text.trim().is_empty()
+                {
+                    query = Some(text.to_string());
+                    break;
+                }
+            }
+            if let Some(query) = query {
+                editor.buffer().set_text(&query);
+            } else {
+                let buffer = editor.buffer();
+                let text = buffer
+                    .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                    .to_string();
+                if !text.trim().is_empty() {
+                    send(
+                        &tx,
+                        Command::Query {
+                            text,
+                            translate: false,
+                        },
+                    );
+                }
+            }
+            search.present();
+            editor.grab_focus();
+        });
     }
     fn clear(&mut self) {
         self.last_result = None;
@@ -507,7 +412,7 @@ impl View {
         }
     }
     fn show(&mut self, result: Results) {
-        self.last_generation = result.generation;
+        self.generation.shown(result.generation);
         let selected_tab = self
             .results
             .current_page()
@@ -550,7 +455,7 @@ impl View {
             } else {
                 empty_state(
                     "No results found",
-                    "Try another word or install an offline dictionary in Settings.",
+                    "Try another word or download a dictionary in Settings.",
                 )
             });
         }
@@ -619,20 +524,26 @@ impl View {
                 .hscrollbar_policy(gtk::PolicyType::Never)
                 .child(&result_card(panel))
                 .build();
-            page.set_overlay_scrolling(false);
-            self.results
-                .append_page(&page, Some(&gtk::Label::new(Some(panel.title))));
+            page.set_overlay_scrolling(true);
+            let tab = components::tab_label(panel.title);
+            self.results.append_page(&page, Some(&tab));
             if selected_tab.as_deref() == Some(panel.title) {
                 selected_page = index as u32;
             }
         }
         let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        for entry in &result.entries {
+        details.add_css_class("writy-result-section");
+        let title = label("Sources", "writy-section-title");
+        details.append(&title);
+        for (index, entry) in result.entries.iter().enumerate() {
+            if index > 0 {
+                details.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            }
             if !entry.pronunciation.is_empty() {
                 details.append(&label(&entry.pronunciation, "writy-meta"));
             }
             for path in entry.audio.iter().take(2) {
-                let b = gtk::Button::with_label("▶ Pronunciation");
+                let b = components::action_button("Play pronunciation");
                 let path = path.clone();
                 b.connect_clicked(move |_| {
                     if let Ok(mut child) = std::process::Command::new("mpv")
@@ -662,13 +573,15 @@ impl View {
                     details.append(&picture);
                 }
             }
-            details.append(&label(
+            let attribution = label(
                 &format!(
                     "{} · {} · {}",
                     entry.source.name, entry.source.license, entry.source.url
                 ),
                 "writy-meta",
-            ));
+            );
+            attribution.set_selectable(true);
+            details.append(&attribution);
         }
         if !result.entries.is_empty() {
             self.tab_copy_texts.borrow_mut().push(String::new());
@@ -677,7 +590,7 @@ impl View {
                 .child(&details)
                 .build();
             self.results
-                .append_page(&page, Some(&gtk::Label::new(Some("Sources"))));
+                .append_page(&page, Some(&components::tab_label("Sources")));
             if selected_tab.as_deref() == Some("Sources") {
                 selected_page = self.results.n_pages() - 1;
             }
@@ -709,7 +622,6 @@ pub fn run(config: Config) -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<AtomicU64>) {
-    let mut pending_clear = None;
     glib::timeout_add_local(Duration::from_millis(33), move || {
         let mut view = view.borrow_mut();
         if let Some(monitor) = &view.layout_monitor {
@@ -729,7 +641,10 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                     generation: cleared,
                     preserve_huds,
                 } => {
-                    if cleared == generation.load(Ordering::SeqCst) {
+                    if view
+                        .generation
+                        .accept(cleared, generation.load(Ordering::SeqCst))
+                    {
                         if preserve_huds {
                             // These are read-only reference panels; stale correction
                             // anchors are discarded in the backend independently.
@@ -737,7 +652,6 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                         } else {
                             view.clear();
                         }
-                        view.last_generation = cleared;
                     }
                 }
                 UiEvent::Screenshot(active) => {
@@ -748,28 +662,7 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                             .set_layer(if active { Layer::Top } else { Layer::Overlay });
                     }
                 }
-                UiEvent::Search(query) => {
-                    if let Some(query) = query {
-                        view.editor.buffer().set_text(&query);
-                    } else {
-                        let buffer = view.editor.buffer();
-                        let text = buffer
-                            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-                            .to_string();
-                        if !text.trim().is_empty() {
-                            send(
-                                &view.tx,
-                                Command::Query {
-                                    text,
-                                    translate: false,
-                                },
-                            );
-                        }
-                    }
-                    view.hud.window.set_visible(false);
-                    view.search.present();
-                    view.editor.grab_focus();
-                }
+                UiEvent::Search(query) => view.open_search(query),
                 UiEvent::Dismiss => {
                     for window in view.app.windows() {
                         window.set_visible(false);
@@ -777,7 +670,10 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                 }
                 UiEvent::Settings => view.settings(),
                 UiEvent::Results(result) => {
-                    if result.generation == generation.load(Ordering::SeqCst) {
+                    if view
+                        .generation
+                        .accept(result.generation, generation.load(Ordering::SeqCst))
+                    {
                         view.show(*result);
                     }
                 }
@@ -788,60 +684,11 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                 }
             }
         }
-        // Fail closed if a clear event was dropped by the bounded UI channel.
-        let latest = generation.load(Ordering::SeqCst);
-        if view.last_generation != latest {
-            // The backend increments generation just before enqueueing its clear.
-            // Allow that in-flight event one frame to arrive before the dropped-
-            // event fallback erases a deliberately retained screenshot/hover HUD.
-            if pending_clear == Some(latest) {
-                view.clear();
-                view.last_generation = latest;
-                pending_clear = None;
-            } else {
-                pending_clear = Some(latest);
-            }
-        } else {
-            pending_clear = None;
+        if view.generation.end_frame(generation.load(Ordering::SeqCst)) {
+            view.clear();
         }
         glib::ControlFlow::Continue
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use writy_core::types::{Confidence, Language, TextSnapshot};
-    #[test]
-    fn generated_translation_is_labelled_but_copied_without_the_label() {
-        let result = Results {
-            writing: true,
-            output_bounds: None,
-            generation: 1,
-            snapshot: TextSnapshot {
-                source: "test".into(),
-                focus_epoch: 1,
-                revision: 1,
-                language: Language::English,
-                text: "hello".into(),
-                confidence: Confidence::Projected,
-            },
-            entries: vec![],
-            suggestions: vec![],
-            translation: Some(("مرحبا".into(), "model · generated".into())),
-            status: String::new(),
-            caret: None,
-            output: None,
-        };
-        let panels = panels(&Results {
-            status: "Generating…".into(),
-            ..result
-        });
-        assert_eq!(panels.len(), 7);
-        assert_eq!(panels[0].body, "AI · مرحبا");
-        assert_eq!(panels[0].copy_text, "مرحبا");
-        assert!(panels[1].copy_text.is_empty());
-    }
 }
 
 #[cfg(test)]
