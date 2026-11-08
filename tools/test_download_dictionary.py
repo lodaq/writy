@@ -10,6 +10,8 @@ from unittest.mock import patch
 import zipfile
 
 import download_dictionary as installer
+from clean_dictionary_jsonl import clean
+from wordnet_to_jsonl import entries
 
 
 class DictionaryPreparationTests(unittest.TestCase):
@@ -152,6 +154,35 @@ class DictionaryPreparationTests(unittest.TestCase):
             installer.download('http://example.invalid/dictionary', Path('unused'))
         with self.assertRaises(ValueError):
             installer.HTTPSRedirect().redirect_request(None, None, 302, '', {}, 'http://example.invalid')
+
+
+class CleaningTest(unittest.TestCase):
+    def test_whitespace_headword_is_logged_without_changing_valid_record(self):
+        valid = '{"word":"كتاب","senses":[{"glosses":["book"]}]}\n'
+        output, rejected = io.StringIO(), io.StringIO()
+        self.assertEqual(clean(io.StringIO(valid + '{"word":" "}\n'), output, rejected), (1, 1))
+        self.assertEqual(output.getvalue(), valid)
+        self.assertEqual(json.loads(rejected.getvalue())['line'], 2)
+
+    def test_malformed_json_is_an_error(self):
+        with self.assertRaises(json.JSONDecodeError):
+            clean(io.StringIO('{broken'), io.StringIO(), io.StringIO())
+
+
+class ConversionTest(unittest.TestCase):
+    def test_preserves_distinct_senses_and_only_attested_synonyms(self):
+        result = list(entries({
+            '1-n': {'members': ['bank', 'depository'], 'partOfSpeech': 'n',
+                    'definition': ['a financial institution'], 'example': ['a savings bank']},
+            '2-n': {'members': ['bank'], 'partOfSpeech': 'n',
+                    'definition': ['the land beside a river']},
+        }))
+        bank = [row for row in result if row['word'] == 'bank']
+        self.assertEqual(len(bank), 2)
+        self.assertEqual(bank[0]['senses'][0]['synonyms'], [{'word': 'depository'}])
+        self.assertEqual(bank[1]['senses'][0]['synonyms'], [])
+        self.assertEqual(bank[0]['senses'][0]['examples'], [{'text': 'a savings bank'}])
+        self.assertNotIn('derived', bank[0]['senses'][0])
 
 
 if __name__ == '__main__':

@@ -6,12 +6,10 @@ use std::{fs, path::Path, time::Duration};
 use unicode_normalization::UnicodeNormalization;
 
 mod kaikki;
-mod library;
 mod markup;
-pub use library::{CATALOGUE, CatalogueEntry, DictionaryLibrary};
 mod packs;
 mod stardict;
-pub use packs::{OpenPack, download_open_pack};
+pub use packs::{CATALOGUE, CatalogueEntry, DictionaryLibrary, OpenPack, download_open_pack};
 
 pub(crate) const MAX_ENTRY_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_ENTRIES: usize = 2_000_000;

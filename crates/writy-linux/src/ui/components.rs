@@ -210,7 +210,8 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
         for (index, row) in group.rows.iter().enumerate() {
             let entry = gtk::Box::new(gtk::Orientation::Horizontal, 14);
             entry.add_css_class("writy-result-entry");
-            let body = label(row.search_text(), "writy-body");
+            let (text, markup) = panel.search_row(group, row);
+            let body = label(&text, "writy-body");
             body.set_selectable(true);
             body.set_focusable(false);
             let spacing = gtk::pango::AttrList::new();
@@ -222,7 +223,7 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
                 },
             ));
             body.set_attributes(Some(&spacing));
-            if let Some(markup) = row.search_markup() {
+            if let Some(markup) = markup {
                 body.set_markup(markup);
             }
             entry.set_direction(body.direction());

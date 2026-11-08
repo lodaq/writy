@@ -25,17 +25,14 @@ Python publisher preparation stay internal to that workflow. Imports and removal
 serialize within a process; SQLite transactions and bounded lock waits still
 coordinate separate processes.
 
-The Linux reading-result module prepares source groups, pending states, display
-text, safe markup selection, and copy text for search and HUD rendering. Search
-retains its compact Arramooz formatting; HUD and clipboard text retain their
-existing forms. Rendering does not decide dictionary-specific formatting.
+GTK prepares source groups, pending states, display text, safe markup selection,
+and copy text for search and HUD rendering. Search retains compact Arramooz
+formatting; HUD and clipboard text retain their existing forms.
 
-The Linux Generation module owns request content, edit anchors, cancellation,
-and invalidation. Backend input transitions invalidate results before publishing
-a new generation, even when the display queue is full. The display independently
-rejects stale events and clears after one frame if a clear event was dropped.
-Keeping a read-only HUD visible never keeps an edit anchor valid; accessibility
-still verifies the target immediately before replacement.
+The backend owns request content, edit anchors, cancellation, and Generation
+invalidation. GTK independently rejects stale events and clears after one frame
+if a clear event was dropped. Keeping a read-only HUD visible never keeps an edit
+anchor valid; accessibility still verifies the target before replacement.
 
 The daemon listens on runtime Unix sockets inside `$XDG_RUNTIME_DIR/writy/`.
 The bridge uses `bridge.sock` with newline-delimited JSON, protocol version 1,

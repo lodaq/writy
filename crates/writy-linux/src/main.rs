@@ -1,10 +1,8 @@
 mod accessibility;
 mod backend;
-mod generation;
 mod input;
 mod ipc;
 mod protocol;
-mod reading_result;
 mod ui;
 
 use anyhow::{Context, Result, ensure};
