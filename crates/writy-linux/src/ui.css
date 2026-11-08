@@ -191,7 +191,7 @@ window.writy-hud { background: transparent; }
 @define-color writy_link mix(@theme_fg_color, @writy_accent, .45);
 @define-color writy_destructive mix(@theme_fg_color, @error_color, .3);
 @define-color writy_button_surface mix(@writy_surface, @theme_fg_color, .07);
-.writy-settings { font-size: 1.14em; }
+.writy-settings { font-size: 1.08em; }
 .writy-hud { font-size: 1.08em; }
 .writy-settings .writy-title { font-size: 1em; letter-spacing: 0; }
 .writy-settings .writy-section-title { font-size: 1.55em; letter-spacing: -.3px; }
@@ -239,6 +239,7 @@ window.writy-hud { background: transparent; }
     border-radius: 10px;
     min-height: 26px;
     padding: 6px 14px;
+    margin: 0 4px;
     background: alpha(@theme_fg_color, .05);
     box-shadow: none;
 }
@@ -253,7 +254,7 @@ window.writy-hud { background: transparent; }
 .writy-hud-section { border-bottom: none; }
 .writy-hud-header button:checked { background: alpha(@writy_accent, .18); }
 window.writy-main { background: @writy_bg; }
-.writy-main { font-size: 1.36em; color: @theme_fg_color; }
+.writy-main { font-size: 1.08em; color: @theme_fg_color; }
 .writy-main .writy-toolbar {
     background: transparent;
     border: none;
@@ -295,7 +296,7 @@ window.writy-main { background: @writy_bg; }
     color: white;
 }
 .writy-main button.suggested-action:hover { background: shade(@writy_accent, 1.1); }
-.writy-main .writy-search-actions button { min-height: 34px; padding: 8px 24px; font-size: 1.2em; }
+.writy-main .writy-search-actions button { min-height: 32px; padding: 6px 18px; font-size: 1em; }
 .writy-main .writy-search-status { font-size: .85em; }
 .writy-main .writy-result-tabs {
     border: 1px solid alpha(@theme_fg_color, .18);
@@ -306,19 +307,19 @@ window.writy-main { background: @writy_bg; }
     background: transparent;
     border: none;
     border-bottom: 1px solid alpha(@theme_fg_color, .1);
-    padding: 15px 22px;
+    padding: 12px 20px;
     box-shadow: none;
 }
 .writy-main .writy-result-tabs > header > tabs { background: transparent; }
 .writy-main .writy-result-tabs > header > tabs > tab {
-    min-height: 30px;
+    min-height: 28px;
     border: none;
-    border-radius: 18px;
-    padding: 8px 28px;
-    margin: 0;
+    border-radius: 14px;
+    padding: 6px 18px;
+    margin: 0 4px;
     background: alpha(@theme_fg_color, .05);
     box-shadow: none;
-    font-size: 1.15em;
+    font-size: 1em;
 }
 .writy-main .writy-result-tabs > header > tabs > tab:checked {
     background: shade(@writy_accent, .93);
@@ -331,11 +332,11 @@ window.writy-main { background: @writy_bg; }
     border: none;
     border-radius: 0;
 }
-.writy-main .writy-result-header .writy-title, .writy-main .writy-section-title { font-size: 1.5em; font-weight: 600; }
+.writy-main .writy-result-header .writy-title, .writy-main .writy-section-title { font-size: 1em; font-weight: 600; }
 .writy-result-header > flowboxchild { padding: 0; background: transparent; }
-.writy-main .writy-result-section button { padding: 5px 16px; font-size: 1.1em; }
+.writy-main .writy-result-section button { padding: 4px 12px; font-size: .9em; }
 .writy-main .writy-source-title {
-    font-size: 1.1em;
+    font-size: .9em;
     font-weight: 400;
     margin-top: 0;
     color: alpha(@theme_fg_color, .78);
@@ -344,19 +345,19 @@ window.writy-main { background: @writy_bg; }
     border-top: 1px solid alpha(@theme_fg_color, .12);
     padding-top: 20px;
 }
-.writy-main .writy-result-entry { padding: 4px 16px 20px 0; }
+.writy-main .writy-result-entry { padding: 4px 16px 14px 0; }
 .writy-main .writy-result-entry:last-child { padding-bottom: 4px; }
 .writy-main .writy-entry-headword {
-    font-size: 2.2em;
+    font-size: 1.4em;
     font-weight: 600;
     letter-spacing: 0;
 }
-.writy-main .writy-body { font-size: 1.15em; }
-.writy-main .writy-body.writy-rtl { font-size: 1.4em; }
+.writy-main .writy-body { font-size: 1em; }
+.writy-main .writy-body.writy-rtl { font-size: 1em; }
 .writy-main .writy-sense-number {
-    min-width: 88px;
-    padding-top: 12px;
-    font-size: 1.15em;
+    min-width: 48px;
+    padding-top: 4px;
+    font-size: 1em;
     font-weight: 600;
     color: alpha(@theme_fg_color, .78);
 }

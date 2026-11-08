@@ -144,8 +144,7 @@ pub(super) fn empty_state(title: &str, detail: &str) -> gtk::Box {
 }
 pub(super) fn tab_label(caption: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(caption));
-    label.set_width_chars(caption.chars().count().min(12) as i32);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_wrap(false);
     label.set_tooltip_text(Some(caption));
     label
 }
