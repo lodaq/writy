@@ -149,6 +149,41 @@ pub(super) fn tab_label(caption: &str) -> gtk::Label {
     label
 }
 
+pub(super) fn enable_wheel_tab_switching(tabs: &gtk::Notebook) {
+    let notebook = tabs.downgrade();
+    let wheel = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::BOTH_AXES | gtk::EventControllerScrollFlags::DISCRETE,
+    );
+    wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+    wheel.connect_scroll(move |_, dx, dy| {
+        if dx == 0. && dy == 0. {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(tabs) = notebook.upgrade() {
+            switch_tab(&tabs, if dy != 0. { dy } else { dx });
+        }
+        glib::Propagation::Stop
+    });
+    // The header receives events over both tab labels and tab padding.
+    tabs.first_child().unwrap().add_controller(wheel);
+}
+
+pub(super) fn switch_tab(tabs: &gtk::Notebook, delta: f64) {
+    if delta == 0. {
+        return;
+    }
+    let count = tabs.n_pages() as i32;
+    let current = tabs.current_page().unwrap_or(0) as i32;
+    let step = if delta > 0. { 1 } else { -1 };
+    for offset in 1..=count {
+        let page = (current + step * offset).rem_euclid(count) as u32;
+        if tabs.nth_page(Some(page)).is_some_and(|w| w.is_visible()) {
+            tabs.set_current_page(Some(page));
+            break;
+        }
+    }
+}
+
 pub(super) fn action_button(caption: &str) -> gtk::Button {
     let button = gtk::Button::with_label(caption);
     let text = button.child().unwrap().downcast::<gtk::Label>().unwrap();

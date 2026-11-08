@@ -51,6 +51,8 @@ CTest tests** plus the isolated desktop run.
 
 ## Later
 
+Add page translation.
+
 MDict, ZIM/Wikipedia, Arabic rule grammar, more dialect coverage, commercial
 source catalogs, Windows/macOS adapters, and specialized FST indexing remain
 outside the initial implementation. Revisit indexing after measured need.

@@ -57,6 +57,97 @@ fn collect_switches(widget: &gtk::Widget, output: &mut Vec<gtk::Switch>) {
     }
 }
 
+fn scroll_tab(tabs: &gtk::Notebook, delta: f64) {
+    let controllers = tabs.first_child().unwrap().observe_controllers();
+    let wheel = (0..controllers.n_items())
+        .find_map(|i| {
+            controllers
+                .item(i)
+                .and_downcast::<gtk::EventControllerScroll>()
+        })
+        .expect("wheel events must reach the tab header controller");
+    wheel.emit_by_name::<bool>("scroll", &[&0f64, &delta]);
+}
+
+#[test]
+#[ignore = "requires xvfb-run, Python 3 and libXtst"]
+fn native_tab_wheel_switching() {
+    gtk::init().unwrap();
+    assert_eq!(
+        gdk::Display::default().unwrap().type_().name(),
+        "GdkX11Display",
+        "Run with GDK_BACKEND=x11 xvfb-run -a"
+    );
+    let tabs = gtk::Notebook::new();
+    for caption in ["First", "Second", "Third"] {
+        tabs.append_page(
+            &gtk::Label::new(Some("Content")),
+            Some(&components::tab_label(caption)),
+        );
+    }
+    components::enable_wheel_tab_switching(&tabs);
+    let window = gtk::Window::builder()
+        .title("Writy wheel test")
+        .default_width(500)
+        .default_height(300)
+        .decorated(false)
+        .child(&tabs)
+        .build();
+    window.present();
+    settle();
+    let scroll = |x: i32, y: i32, button: u32| {
+        let status = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(r#"
+import ctypes, sys
+x11 = ctypes.CDLL('libX11.so.6')
+xtest = ctypes.CDLL('libXtst.so.6')
+x11.XOpenDisplay.restype = ctypes.c_void_p
+display = x11.XOpenDisplay(None)
+assert display, 'X11 test display is unavailable'
+xtest.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+xtest.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+xtest.XTestFakeMotionEvent(display, -1, int(sys.argv[1]), int(sys.argv[2]), 0)
+for pressed in [1, 0]:
+    xtest.XTestFakeButtonEvent(display, int(sys.argv[3]), pressed, 0)
+x11.XSync(display, 0)
+x11.XCloseDisplay(display)
+"#)
+            .args([x.to_string(), y.to_string(), button.to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        settle();
+    };
+    let label = tabs.tab_label(&tabs.nth_page(Some(0)).unwrap()).unwrap();
+    let tab = label.parent().unwrap();
+    let bounds = tab.compute_bounds(&window).unwrap();
+    let x = bounds.x() as i32 + 1;
+    let y = (bounds.y() + bounds.height() / 2.) as i32;
+    assert_eq!(
+        window.pick(x as f64, y as f64, gtk::PickFlags::DEFAULT),
+        Some(tab)
+    );
+    scroll(x, y, 5);
+    assert_eq!(tabs.current_page(), Some(1));
+    scroll(x, y, 4);
+    assert_eq!(tabs.current_page(), Some(0));
+    scroll(x, y, 4);
+    assert_eq!(tabs.current_page(), Some(2));
+    tabs.nth_page(Some(1)).unwrap().set_visible(false);
+    scroll(x, y, 4);
+    assert_eq!(tabs.current_page(), Some(0));
+    scroll(250, 150, 5);
+    assert_eq!(
+        tabs.current_page(),
+        Some(0),
+        "Content scrolling must not switch tabs"
+    );
+    window.close();
+}
+
 fn contrast(widget: &gtk::Widget, background: gdk::RGBA) -> f64 {
     let foreground = widget.color();
     let channel = |front: f32, back: f32| {
@@ -250,6 +341,13 @@ fn native_component_gallery() {
                 == Some("Definition")
         })
         .unwrap();
+    tabs.set_current_page(Some(definition));
+    scroll_tab(&tabs, 1.);
+    assert_eq!(
+        tabs.current_page(),
+        Some((definition + 1) % tabs.n_pages()),
+        "The mouse wheel over a tab must select the next result"
+    );
     tabs.set_current_page(Some(definition));
     assert!(view.borrow().search_copy_text.borrow().contains("choice"));
     view.borrow_mut().show(result.clone());
@@ -457,6 +555,13 @@ fn native_component_gallery() {
         .downcast::<gtk::Notebook>()
         .unwrap();
     assert_eq!(preferences.n_pages(), 4);
+    scroll_tab(&preferences, 1.);
+    assert_eq!(
+        preferences.current_page(),
+        Some(1),
+        "The mouse wheel over a settings tab must select the next page"
+    );
+    preferences.set_current_page(Some(0));
     let mut general = Vec::new();
     collect_switches(&preferences.nth_page(Some(0)).unwrap(), &mut general);
     assert_eq!(general.len(), 2);
@@ -932,6 +1037,13 @@ fn native_component_gallery() {
     }
     {
         let tabs = view.borrow().hud.tabs.clone();
+        tabs.set_current_page(Some(0));
+        scroll_tab(&tabs, 1.);
+        assert_eq!(
+            tabs.current_page(),
+            Some(1),
+            "The mouse wheel over a HUD tab must select the next section"
+        );
         tabs.set_current_page(Some(0));
         hud::switch_section(&tabs, -1.);
         assert_eq!(tabs.current_page(), Some(6));

@@ -653,6 +653,7 @@ impl View {
             }
         });
         let results = gtk::Notebook::new();
+        components::enable_wheel_tab_switching(&results);
         results.set_scrollable(true);
         results.set_vexpand(true);
         results.set_size_request(-1, 220);

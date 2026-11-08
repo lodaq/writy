@@ -280,6 +280,7 @@ impl View {
         message.set_hexpand(true);
         footer.append(&message);
         footer.append(&save);
+        components::enable_wheel_tab_switching(&pages);
         shell.append(&pages);
         shell.append(&footer);
         window.set_child(Some(&shell));

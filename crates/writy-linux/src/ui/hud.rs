@@ -155,6 +155,7 @@ impl HudStack {
                 },
             );
         }
+        components::enable_wheel_tab_switching(&tabs);
         let cards: Vec<gtk::Box> = sections
             .values()
             .map(|section| section.card.clone())
@@ -479,19 +480,7 @@ fn install_drag(
 }
 
 pub(super) fn switch_section(tabs: &gtk::Notebook, delta: f64) {
-    if delta == 0. {
-        return;
-    }
-    let count = tabs.n_pages() as i32;
-    let current = tabs.current_page().unwrap_or(0) as i32;
-    let step = if delta > 0. { 1 } else { -1 };
-    for offset in 1..=count {
-        let page = (current + step * offset).rem_euclid(count) as u32;
-        if tabs.nth_page(Some(page)).is_some_and(|w| w.is_visible()) {
-            tabs.set_current_page(Some(page));
-            break;
-        }
-    }
+    components::switch_tab(tabs, delta);
 }
 fn pointer_placement(
     pointer: (i32, i32),
