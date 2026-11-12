@@ -17,6 +17,7 @@ struct Placement {
     bounds: Cell<gdk::Rectangle>,
     automatic: Cell<(i32, i32)>,
     manual: Cell<Option<(i32, i32)>>,
+    pending_drag: Cell<Option<(i32, i32)>>,
 }
 
 pub(super) struct HudStack {
@@ -50,6 +51,7 @@ impl HudStack {
             bounds: Cell::new(gdk::Rectangle::new(0, 0, 900, 900)),
             automatic: Cell::new((440, 16)),
             manual: Cell::new(None),
+            pending_drag: Cell::new(None),
         });
         let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
         surface.add_css_class("writy-hud-surface");
@@ -161,7 +163,9 @@ impl HudStack {
             .map(|section| section.card.clone())
             .collect();
         let last_width = Cell::new(0);
+        let drag_placement = placement.clone();
         window.add_tick_callback(move |window, _| {
+            apply_drag_position(window, &drag_placement);
             let width = window.width();
             if last_width.replace(width) != width {
                 let margin = ((width - 960) / 2).max(0);
@@ -206,7 +210,11 @@ impl HudStack {
         motion.connect_leave(move |_| send(&leave_tx, Command::HudInteraction { active: false }));
         surface.add_controller(motion);
         let hidden_tx = tx.clone();
-        window.connect_hide(move |_| send(&hidden_tx, Command::HudInteraction { active: false }));
+        let hidden_placement = placement.clone();
+        window.connect_hide(move |_| {
+            hidden_placement.pending_drag.set(None);
+            send(&hidden_tx, Command::HudInteraction { active: false });
+        });
         window.set_child(Some(&surface));
 
         let weak = window.downgrade();
@@ -431,8 +439,6 @@ fn install_drag(
     header.set_cursor_from_name(Some("grab"));
     let drag = gtk::GestureDrag::new();
     drag.set_button(1);
-    let origin = Rc::new(Cell::new((0, 0)));
-    let start = origin.clone();
     let weak = window.downgrade();
     let full = expand.clone();
     drag.connect_drag_begin(move |gesture, x, y| {
@@ -453,9 +459,6 @@ fn install_drag(
             gesture.set_state(gtk::EventSequenceState::Denied);
             return;
         }
-        if layer_shell_supported() {
-            start.set((window.margin(Edge::Left), window.margin(Edge::Top)));
-        }
         if !layer_shell_supported()
             && let Some(event) = gesture.current_event()
             && let Some(device) = event.device()
@@ -466,17 +469,43 @@ fn install_drag(
     });
     let weak = window.downgrade();
     let full = expand.clone();
+    let movement = placement.clone();
     drag.connect_drag_update(move |_, dx, dy| {
         if full.is_active() || !layer_shell_supported() {
             return;
         }
         if let Some(window) = weak.upgrade() {
-            let (x, y) = origin.get();
-            placement.manual.set(Some((x + dx as i32, y + dy as i32)));
-            apply_geometry(&window, &placement, false);
+            // Offsets are local to the moving surface, so use its current position.
+            movement.pending_drag.set(Some((
+                window.margin(Edge::Left) + dx as i32,
+                window.margin(Edge::Top) + dy as i32,
+            )));
+        }
+    });
+    let weak = window.downgrade();
+    drag.connect_drag_end(move |_, _, _| {
+        if let Some(window) = weak.upgrade() {
+            apply_drag_position(&window, &placement);
         }
     });
     header.add_controller(drag);
+}
+
+fn apply_drag_position(window: &gtk::ApplicationWindow, placement: &Placement) {
+    let Some(position) = placement.pending_drag.take() else {
+        return;
+    };
+    let bounds = placement.bounds.get();
+    let (width, height) = compact_size(bounds);
+    let (x, y) = clamp_position(position, bounds, width, height);
+    placement.manual.set(Some((x, y)));
+    // Move once per frame without resetting size, anchors or fullscreen styling.
+    if window.margin(Edge::Left) != x {
+        window.set_margin(Edge::Left, x);
+    }
+    if window.margin(Edge::Top) != y {
+        window.set_margin(Edge::Top, y);
+    }
 }
 
 pub(super) fn switch_section(tabs: &gtk::Notebook, delta: f64) {

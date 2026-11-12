@@ -181,3 +181,12 @@ sets a synthetic PRIMARY selection with no Writy daemon running, invokes the
 same `writy search` action bound to Alt+G, and checks that a local mock translator
 receives the selection and that Writy returns the completed translation. It does
 not depend on a public translation service or change the desktop clipboard.
+
+## HUD drag regression
+
+In a Wayland session with layer-shell, run
+`GDK_BACKEND=wayland cargo test -p writy-linux native_hud_drag_preserves_pointer_position -- --ignored`.
+The synthetic panel checks that motion events wait for the next display frame
+and that movement does not pull the panel back when its local pointer offset
+returns to zero. This verifies coordinate handling and update batching, not a
+frame-rate guarantee under every desktop workload.

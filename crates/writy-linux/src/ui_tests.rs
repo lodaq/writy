@@ -1077,6 +1077,7 @@ fn native_component_gallery() {
         let before = (hud_window.margin(Edge::Left), hud_window.margin(Edge::Top));
         drag.emit_by_name::<()>("drag-begin", &[&20f64, &20f64]);
         drag.emit_by_name::<()>("drag-update", &[&-40f64, &24f64]);
+        settle();
         let moved = (hud_window.margin(Edge::Left), hud_window.margin(Edge::Top));
         assert_ne!(before, moved, "Header dragging must move the panel");
         view.borrow_mut().show(Results {
@@ -1292,5 +1293,68 @@ fn arabic_result_reading_layout() {
         first > body.width() * 3 / 4,
         "Arabic must begin at the physical right inset, not in the middle or left"
     );
+    window.close();
+}
+
+#[test]
+#[ignore = "requires a Wayland compositor with layer-shell; synthetic content only"]
+fn native_hud_drag_preserves_pointer_position() {
+    gtk::init().unwrap();
+    assert!(layer_shell_supported());
+    let app = gtk::Application::builder()
+        .application_id("io.github.lodaq.writy.drag-test")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let view = View::new(&app, tx, Config::default());
+    view.borrow_mut().show(Results {
+        writing: true,
+        output_bounds: None,
+        generation: 1,
+        snapshot: TextSnapshot {
+            source: "synthetic".into(),
+            focus_epoch: 1,
+            revision: 1,
+            language: Language::English,
+            text: "drag fixture".into(),
+            confidence: Confidence::Projected,
+        },
+        entries: vec![],
+        suggestions: vec![],
+        translation: Some(("اختبار".into(), "synthetic".into())),
+        status: String::new(),
+        caret: None,
+        output: None,
+    });
+    let window = view.borrow().hud.window.clone();
+    window.present();
+    settle();
+    let header = window.child().unwrap().first_child().unwrap();
+    let controllers = header.observe_controllers();
+    let drag = (0..controllers.n_items())
+        .find_map(|i| controllers.item(i).and_downcast::<gtk::GestureDrag>())
+        .unwrap();
+    let initial = (window.margin(Edge::Left), window.margin(Edge::Top));
+    drag.emit_by_name::<()>("drag-begin", &[&20f64, &20f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-10f64, &4f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-40f64, &24f64]);
+    assert_eq!(
+        (window.margin(Edge::Left), window.margin(Edge::Top)),
+        initial,
+        "Pointer events must coalesce until the next display frame"
+    );
+    settle();
+    let moved = (window.margin(Edge::Left), window.margin(Edge::Top));
+    assert_ne!(moved, initial);
+    // The popup caught up with the pointer: local coordinates return to the grab point.
+    drag.emit_by_name::<()>("drag-update", &[&0f64, &0f64]);
+    settle();
+    assert_eq!(
+        (window.margin(Edge::Left), window.margin(Edge::Top)),
+        moved,
+        "Moving the surface must not make the next drag event pull it back"
+    );
+    drag.emit_by_name::<()>("drag-end", &[&0f64, &0f64]);
     window.close();
 }
