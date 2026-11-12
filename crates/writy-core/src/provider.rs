@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, TranslationEngine},
     types::{Capability, Language, ProviderResult, TextSnapshot},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 1_048_576;
+const BING_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 
 #[derive(Clone)]
 pub struct ModelService {
@@ -49,7 +50,24 @@ impl ModelService {
             "text must contain 1..8192 characters"
         );
         let mut online_error = None;
-        if !self.config.offline && !self.config.model.cloud_url.is_empty() {
+        let engine = self.config.model.translation_engine;
+        if !self.config.offline
+            && capability == Capability::Translate
+            && engine != TranslationEngine::Model
+        {
+            match self.translate_online(&snapshot).await {
+                Ok(text) => {
+                    return Ok(ProviderResult {
+                        snapshot,
+                        capability,
+                        text,
+                        provider: format!("{} · online", engine.name()),
+                        notice: None,
+                    });
+                }
+                Err(error) => online_error = Some(format!("{}: {error:#}", engine.name())),
+            }
+        } else if !self.config.offline && !self.config.model.cloud_url.is_empty() {
             match self.cloud(&snapshot, capability).await {
                 Ok(text) => {
                     let provider = format!("Cloud · {} · generated", self.config.model.cloud_model);
@@ -84,6 +102,174 @@ impl ModelService {
                 Err(error.context("local model unavailable"))
             }
         }
+    }
+
+    async fn translate_online(&self, snapshot: &TextSnapshot) -> Result<String> {
+        let engine = self.config.model.translation_engine;
+        let configured_key = match engine {
+            TranslationEngine::Google => &self.config.model.google_api_key,
+            TranslationEngine::Bing => &self.config.model.bing_api_key,
+            TranslationEngine::Yandex => &self.config.model.yandex_api_key,
+            _ => "",
+        };
+        let key = if !configured_key.is_empty() {
+            configured_key.to_owned()
+        } else {
+            std::env::var(engine.key_env()).unwrap_or_default()
+        };
+        if key.is_empty() && engine != TranslationEngine::Apertium {
+            return tokio::time::timeout(
+                Duration::from_secs(self.config.model.timeout_secs),
+                self.translate_keyless(snapshot),
+            )
+            .await
+            .context("keyless translation timed out")?;
+        }
+        let value = self
+            .translation_json(self.translation_request(snapshot, &key)?)
+            .await?;
+        let text = translation_text(engine, &value)?;
+        validate_response(snapshot, Capability::Translate, &text)?;
+        Ok(text)
+    }
+
+    async fn translation_json(&self, request: reqwest::RequestBuilder) -> Result<Value> {
+        let response = request
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("translation connection failed or timed out"))?;
+        ensure!(
+            response.status().is_success(),
+            "translation HTTP {}",
+            response.status().as_u16()
+        );
+        serde_json::from_slice(&bounded_body(response).await?)
+            .map_err(|_| anyhow::anyhow!("invalid translation response"))
+    }
+
+    async fn translate_keyless(&self, snapshot: &TextSnapshot) -> Result<String> {
+        let engine = self.config.model.translation_engine;
+        let source = snapshot.language.code();
+        let target = snapshot.language.opposite().code();
+        // These web/client interfaces are unofficial; failures retain the local fallback.
+        let request = match engine {
+            TranslationEngine::Google => {
+                ensure!(
+                    snapshot.text.chars().count() <= 5000,
+                    "Google keyless limit is 5000 characters"
+                );
+                self.client
+                    .post("https://clients5.google.com/translate_a/t")
+                    .query(&[("client", "dict-chrome-ex"), ("sl", source), ("tl", target)])
+                    .form(&[("q", snapshot.text.as_str())])
+            }
+            TranslationEngine::Bing => {
+                ensure!(
+                    snapshot.text.encode_utf16().count() <= 1000,
+                    "Bing keyless limit is 1000 UTF-16 units; using local translation for longer text"
+                );
+                let response = self
+                    .client
+                    .get("https://www.bing.com/translator")
+                    .header("User-Agent", BING_USER_AGENT)
+                    .send()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("Bing session connection failed"))?;
+                ensure!(
+                    response.status().is_success(),
+                    "Bing session HTTP {}",
+                    response.status().as_u16()
+                );
+                let page = String::from_utf8(bounded_body(response).await?)
+                    .context("invalid Bing session page")?;
+                let auth = bing_auth(&page)?;
+                self.client
+                    .post("https://www.bing.com/ttranslatev3")
+                    .header("User-Agent", BING_USER_AGENT)
+                    .header("Referer", "https://www.bing.com/translator")
+                    .query(&[
+                        ("isVertical", "1"),
+                        ("IG", auth.ig.as_str()),
+                        ("IID", auth.iid.as_str()),
+                    ])
+                    .form(&[
+                        ("fromLang", source),
+                        ("to", target),
+                        ("text", snapshot.text.as_str()),
+                        ("key", auth.key.as_str()),
+                        ("token", auth.token.as_str()),
+                    ])
+            }
+            TranslationEngine::Yandex => self
+                .client
+                .post("https://translate.yandex.net/api/v1/tr.json/translate")
+                .query(&[
+                    ("srv", "android".to_owned()),
+                    ("format", "text".to_owned()),
+                    (
+                        "id",
+                        format!(
+                            "{:032x}-0-0",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)?
+                                .as_nanos()
+                        ),
+                    ),
+                ])
+                .header(
+                    "User-Agent",
+                    "ru.yandex.translate/22.11.8.22364114 (samsung SM-A505GM; Android 12)",
+                )
+                .form(&[
+                    ("text", snapshot.text.clone()),
+                    ("lang", format!("{source}-{target}")),
+                ]),
+            _ => bail!("invalid keyless translation engine"),
+        };
+        let value = self.translation_json(request).await?;
+        let text = keyless_translation_text(engine, &value)?;
+        validate_response(snapshot, Capability::Translate, &text)?;
+        Ok(text)
+    }
+
+    fn translation_request(
+        &self,
+        snapshot: &TextSnapshot,
+        key: &str,
+    ) -> Result<reqwest::RequestBuilder> {
+        let source = snapshot.language.code();
+        let target = snapshot.language.opposite().code();
+        Ok(match self.config.model.translation_engine {
+            TranslationEngine::Google => self.client
+                .post("https://translation.googleapis.com/language/translate/v2")
+                .header("X-Goog-Api-Key", key)
+                .json(&json!({"q": snapshot.text, "source": source, "target": target, "format": "text"})),
+            TranslationEngine::Bing => {
+                let mut request = self.client
+                    .post("https://api.cognitive.microsofttranslator.com/translate")
+                    .query(&[("api-version", "3.0"), ("from", source), ("to", target)])
+                    .header("Ocp-Apim-Subscription-Key", key)
+                    .json(&json!([{"Text": snapshot.text}]));
+                let region = if self.config.model.bing_region.is_empty() {
+                    std::env::var("WRITY_BING_REGION").unwrap_or_default()
+                } else { self.config.model.bing_region.clone() };
+                if !region.is_empty() {
+                    request = request.header("Ocp-Apim-Subscription-Region", region);
+                }
+                request
+            },
+            TranslationEngine::Yandex => self.client
+                .post("https://translate.api.cloud.yandex.net/translate/v2/translate")
+                .header("Authorization", format!("Api-Key {key}"))
+                .json(&json!({"texts": [snapshot.text], "sourceLanguageCode": source,
+                    "targetLanguageCode": target, "format": "PLAIN_TEXT"})),
+            TranslationEngine::Apertium => self.client
+                .post("https://apertium.org/apy/translate")
+                .form(&[("q", snapshot.text.clone()), ("langpair", format!("{}|{}",
+                    if source == "en" { "eng" } else { "ara" },
+                    if target == "en" { "eng" } else { "ara" })), ("markUnknown", "no".into())]),
+            TranslationEngine::Model => bail!("select an online translation engine"),
+        })
     }
 
     fn model(&self, capability: Capability) -> &str {
@@ -198,6 +384,115 @@ impl ModelService {
         validate_response(snapshot, capability, &text)?;
         Ok(text)
     }
+}
+
+struct BingAuth {
+    ig: String,
+    iid: String,
+    key: String,
+    token: String,
+}
+fn bing_auth(page: &str) -> Result<BingAuth> {
+    let field = |prefix: &str| -> Result<String> {
+        let text = page
+            .split_once(prefix)
+            .context("Bing session format changed")?
+            .1
+            .split_once('"')
+            .context("invalid Bing session field")?
+            .0;
+        ensure!(
+            !text.is_empty() && text.len() <= 2048,
+            "invalid Bing session field"
+        );
+        Ok(text.into())
+    };
+    let rest = page
+        .split_once("params_AbusePreventionHelper")
+        .context("Bing session token missing")?
+        .1;
+    let json = rest
+        .split_once('=')
+        .context("invalid Bing session token")?
+        .1
+        .trim_start();
+    let params: Value = serde_json::Deserializer::from_str(json)
+        .into_iter::<Value>()
+        .next()
+        .context("Bing session token missing")?
+        .map_err(|_| anyhow::anyhow!("invalid Bing session token"))?;
+    let key = params
+        .get(0)
+        .and_then(Value::as_u64)
+        .context("Bing session key missing")?
+        .to_string();
+    let token = params
+        .get(1)
+        .and_then(Value::as_str)
+        .context("Bing session token missing")?;
+    ensure!(
+        !token.is_empty() && token.len() <= 2048,
+        "invalid Bing session token"
+    );
+    Ok(BingAuth {
+        ig: field("IG:\"")?,
+        iid: field("data-iid=\"")?,
+        key,
+        token: token.into(),
+    })
+}
+fn keyless_translation_text(engine: TranslationEngine, value: &Value) -> Result<String> {
+    if engine == TranslationEngine::Bing {
+        return translation_text(engine, value);
+    }
+    let rows = match engine {
+        TranslationEngine::Google => value.as_array(),
+        TranslationEngine::Yandex => {
+            ensure!(
+                value.get("code").and_then(Value::as_u64) == Some(200),
+                "Yandex rejected the translation"
+            );
+            value.get("text").and_then(Value::as_array)
+        }
+        _ => bail!("invalid keyless engine"),
+    }
+    .context("translation text missing")?;
+    ensure!(!rows.is_empty(), "translation text missing");
+    let mut text = String::new();
+    for row in rows {
+        text.push_str(row.as_str().context("invalid translation segment")?);
+    }
+    ensure!(
+        !text.trim().is_empty() && text.chars().count() <= 8192,
+        "translation output is empty or excessive"
+    );
+    Ok(text.trim().into())
+}
+
+fn translation_text(engine: TranslationEngine, value: &Value) -> Result<String> {
+    if engine == TranslationEngine::Apertium {
+        ensure!(
+            value.get("responseStatus").and_then(Value::as_u64) == Some(200),
+            "Apertium could not translate this language pair"
+        );
+    }
+    let path = match engine {
+        TranslationEngine::Google => "/data/translations/0/translatedText",
+        TranslationEngine::Bing => "/0/translations/0/text",
+        TranslationEngine::Yandex => "/translations/0/text",
+        TranslationEngine::Apertium => "/responseData/translatedText",
+        TranslationEngine::Model => bail!("invalid translation engine"),
+    };
+    let text = value
+        .pointer(path)
+        .and_then(Value::as_str)
+        .context("translation text missing")?
+        .trim();
+    ensure!(
+        !text.is_empty() && text.chars().count() <= 8192,
+        "translation output is empty or excessive"
+    );
+    Ok(text.into())
 }
 
 fn validate_response(snapshot: &TextSnapshot, capability: Capability, text: &str) -> Result<()> {
@@ -565,6 +860,150 @@ impl StreamDecoder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn keyless_responses_reject_errors_and_keep_all_segments() {
+        assert_eq!(
+            keyless_translation_text(TranslationEngine::Google, &json!(["First.\n", "Second."]))
+                .unwrap(),
+            "First.\nSecond."
+        );
+        assert_eq!(
+            keyless_translation_text(
+                TranslationEngine::Yandex,
+                &json!({"code":200,"text":["مرحبا"]})
+            )
+            .unwrap(),
+            "مرحبا"
+        );
+        for value in [
+            json!([]),
+            json!([null]),
+            json!([""]),
+            json!({"error":"blocked"}),
+        ] {
+            assert!(keyless_translation_text(TranslationEngine::Google, &value).is_err());
+        }
+        assert!(
+            keyless_translation_text(
+                TranslationEngine::Yandex,
+                &json!({"code":403,"text":["error"]})
+            )
+            .is_err()
+        );
+        assert!(
+            keyless_translation_text(TranslationEngine::Bing, &json!({"statusCode":205})).is_err()
+        );
+        let auth = bing_auth(r#"IG:"session" data-iid="translator.1" var params_AbusePreventionHelper = [123,"temporary-token",3600000]; trailing js"#).unwrap();
+        assert_eq!(auth.ig, "session");
+        assert_eq!(auth.iid, "translator.1");
+        assert_eq!(auth.key, "123");
+        assert_eq!(auth.token, "temporary-token");
+        for page in [
+            "captcha",
+            "params_AbusePreventionHelper = null",
+            "params_AbusePreventionHelper = [123,42]",
+        ] {
+            assert!(bing_auth(page).is_err());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "sends synthetic text to live Google, Bing and Yandex services"]
+    async fn keyless_live_translation_both_directions() {
+        for engine in [
+            TranslationEngine::Google,
+            TranslationEngine::Bing,
+            TranslationEngine::Yandex,
+        ] {
+            let mut config = Config::default();
+            config.model.translation_engine = engine;
+            let service = ModelService::new(config).unwrap();
+            for (language, text) in [
+                (
+                    Language::English,
+                    "I did not approve the changes. Please wait until tomorrow.",
+                ),
+                (
+                    Language::Arabic,
+                    "لم أوافق على التغييرات. يرجى الانتظار حتى الغد.",
+                ),
+            ] {
+                let snapshot = TextSnapshot {
+                    source: "synthetic-test".into(),
+                    focus_epoch: 1,
+                    revision: 1,
+                    language,
+                    text: text.into(),
+                    confidence: crate::types::Confidence::Verified,
+                };
+                let result = service.translate_keyless(&snapshot).await;
+                println!("{} {}: {:?}", engine.name(), language.code(), result);
+                assert!(
+                    result.is_ok(),
+                    "{} {} failed",
+                    engine.name(),
+                    language.code()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn direct_translation_requests_and_responses() {
+        let snapshot = TextSnapshot {
+            source: "test".into(),
+            focus_epoch: 1,
+            revision: 1,
+            language: Language::English,
+            text: "Hello & goodbye".into(),
+            confidence: crate::types::Confidence::Verified,
+        };
+        for (engine, body, host) in [
+            (
+                TranslationEngine::Google,
+                json!({"data":{"translations":[{"translatedText":"مرحبا"}]}}),
+                "translation.googleapis.com",
+            ),
+            (
+                TranslationEngine::Bing,
+                json!([{"translations":[{"text":"مرحبا"}]}]),
+                "api.cognitive.microsofttranslator.com",
+            ),
+            (
+                TranslationEngine::Yandex,
+                json!({"translations":[{"text":"مرحبا"}]}),
+                "translate.api.cloud.yandex.net",
+            ),
+            (
+                TranslationEngine::Apertium,
+                json!({"responseStatus":200,"responseData":{"translatedText":"مرحبا"}}),
+                "apertium.org",
+            ),
+        ] {
+            let mut config = Config::default();
+            config.model.translation_engine = engine;
+            let service = ModelService::new(config).unwrap();
+            let request = service
+                .translation_request(&snapshot, "test-secret")
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(request.url().host_str(), Some(host));
+            assert_eq!(request.method(), reqwest::Method::POST);
+            assert!(!request.url().as_str().contains("test-secret"));
+            assert!(!request.url().as_str().contains("Hello"));
+            assert_eq!(translation_text(engine, &body).unwrap(), "مرحبا");
+            assert!(translation_text(engine, &json!({})).is_err());
+        }
+        assert!(
+            translation_text(
+                TranslationEngine::Apertium,
+                &json!({"responseStatus":400,"responseData":{"translatedText":"error"}})
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn translations_must_use_the_target_language() {
         assert!(

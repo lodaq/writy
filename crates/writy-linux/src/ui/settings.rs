@@ -3,10 +3,10 @@ use super::*;
 
 fn page(tabs: &gtk::Notebook, name: &str, title: &str, detail: &str) -> gtk::Box {
     let (section, content) = section(title, detail);
-    section.set_margin_top(24);
-    section.set_margin_bottom(24);
-    section.set_margin_start(24);
-    section.set_margin_end(24);
+    section.set_margin_top(14);
+    section.set_margin_bottom(14);
+    section.set_margin_start(14);
+    section.set_margin_end(14);
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&section)
@@ -16,9 +16,9 @@ fn page(tabs: &gtk::Notebook, name: &str, title: &str, detail: &str) -> gtk::Box
 }
 
 fn toggle_row(title: &str, detail: &str, active: bool) -> (gtk::Box, gtk::Switch) {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 20);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("writy-preference-row");
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
     text.set_hexpand(true);
     text.append(&label(title, "writy-preference-title"));
     if !detail.is_empty() {
@@ -47,8 +47,8 @@ impl View {
         let window = gtk::ApplicationWindow::builder()
             .application(&self.app)
             .title("Writy Settings")
-            .default_width(780)
-            .default_height(760)
+            .default_width(720)
+            .default_height(640)
             .build();
         window.add_css_class("writy-settings");
         window.set_transient_for(Some(&self.search));
@@ -91,10 +91,92 @@ impl View {
             "Language models",
             "Use installed Ollama models for writing and translation.",
         );
+        let translation = page(
+            &pages,
+            "Translation",
+            "Translation engines",
+            "Choose an engine. Google, Bing and Yandex work without API keys.",
+        );
+        let engines = [
+            writy_core::config::TranslationEngine::Model,
+            writy_core::config::TranslationEngine::Google,
+            writy_core::config::TranslationEngine::Bing,
+            writy_core::config::TranslationEngine::Yandex,
+            writy_core::config::TranslationEngine::Apertium,
+        ];
+        translation.append(&label(
+            "Selection and search translation engine",
+            "writy-meta",
+        ));
+        let engine = gtk::DropDown::from_strings(&[
+            "Language model",
+            "Google",
+            "Bing",
+            "Yandex",
+            "Apertium",
+        ]);
+        engine.update_property(&[gtk::accessible::Property::Label("Translation engine")]);
+        engine.set_selected(
+            engines
+                .iter()
+                .position(|e| *e == loaded.model.translation_engine)
+                .unwrap_or(0) as u32,
+        );
+        translation.append(&engine);
+        translation.append(&label("Select Google, Bing or Yandex and save to use keyless translation. These unofficial interfaces may be blocked or change. Offline only blocks online requests; failures use Ollama.", "writy-meta"));
+        let mut provider_entries = Vec::new();
+        for (title, key, detail, url) in [
+            (
+                "Google API key (optional)",
+                loaded.model.google_api_key.clone(),
+                "Leave blank for keyless translation. For the official API, create a Google Cloud project, enable billing and Cloud Translation API, then create an API key restricted to that API.",
+                "https://docs.cloud.google.com/translate/docs/setup",
+            ),
+            (
+                "Microsoft Translator (Bing) API key (optional)",
+                loaded.model.bing_api_key.clone(),
+                "Leave blank for keyless translation. For the official API, create an Azure Translator resource. Copy Key 1 from Resource Management → Keys and Endpoint. Use a public global endpoint resource.",
+                "https://learn.microsoft.com/en-us/azure/ai-services/translator/how-to-create-translator-resource",
+            ),
+            (
+                "Yandex API key (optional)",
+                loaded.model.yandex_api_key.clone(),
+                "Leave blank for keyless translation. For the official API, create a service account, grant ai.translate.user on its folder, then create an API key with yc.ai.translate.execute scope.",
+                "https://yandex.cloud/en/docs/translate/api-ref/authentication",
+            ),
+        ] {
+            let group = gtk::Expander::new(Some(title));
+            group.set_label_widget(Some(&label(title, "writy-title")));
+            let fields = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            let secret = gtk::PasswordEntry::new();
+            secret.set_show_peek_icon(true);
+            secret.set_width_chars(8);
+            secret.set_text(&key);
+            secret.update_property(&[gtk::accessible::Property::Label(title)]);
+            fields.append(&secret);
+            fields.append(&label(detail, "writy-meta"));
+            fields.append(&gtk::LinkButton::with_label(url, "Setup guide"));
+            group.set_child(Some(&fields));
+            translation.append(&group);
+            provider_entries.push(secret);
+        }
+        translation.append(&label(
+            "Microsoft API region (optional; unused for keyless)",
+            "writy-meta",
+        ));
+        let region = gtk::Entry::new();
+        region.set_width_chars(8);
+        region.set_text(&loaded.model.bing_region);
+        region.set_placeholder_text(Some("e.g. eastus — shown in Keys and Endpoint"));
+        region.update_property(&[gtk::accessible::Property::Label(
+            "Microsoft Translator region",
+        )]);
+        translation.append(&region);
+        translation.append(&label("Keys are saved as plain text in your private config file (owner read/write only). Keys in environment variables also select the official APIs; without a key, keyless translation is used. Click Save settings to apply; no restart needed. Apertium needs no key but currently has no English–Arabic pair.", "writy-meta"));
         let advanced = gtk::Expander::new(Some("Cloud provider"));
         advanced.set_label_widget(Some(&label("Cloud provider", "writy-meta")));
-        let cloud = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        cloud.set_margin_top(12);
+        let cloud = gtk::Box::new(gtk::Orientation::Vertical, 7);
+        cloud.set_margin_top(7);
         advanced.set_child(Some(&cloud));
         let fields = [
             ("Ollama URL", loaded.model.ollama_url.clone()),
@@ -119,7 +201,7 @@ impl View {
         let mut entries = Vec::new();
         let mut model_choices = Vec::new();
         for (index, (title, value)) in fields.into_iter().enumerate() {
-            let field = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            let field = gtk::Box::new(gtk::Orientation::Vertical, 4);
             field.append(&label(title, "writy-meta"));
             if index < 3 {
                 models.append(&field);
@@ -223,7 +305,7 @@ impl View {
             "Floating panels",
             "Choose which details appear beside your writing.",
         );
-        let toggles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let toggles = gtk::Box::new(gtk::Orientation::Vertical, 1);
         let mut huds = Vec::new();
         for (key, title) in CATEGORIES {
             let (row, c) = toggle_row(title, "", loaded.huds.get(key).copied().unwrap_or(true));
@@ -236,9 +318,9 @@ impl View {
             &pages,
             "Dictionaries",
             "Dictionary library",
-            "Download dictionaries from Explore, then turn them on or off in Downloaded.",
+            "Download, enable or remove dictionaries.",
         );
-        let catalogue = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let catalogue = gtk::Box::new(gtk::Orientation::Vertical, 7);
         dictionaries.append(&catalogue);
         super::dictionaries::populate(&catalogue, &self.tx, &message);
         super::dictionaries::watch_installs(&catalogue, &self.tx, &message);
@@ -261,6 +343,11 @@ impl View {
             c.model.ollama_url = entries[0].text().into();
             c.model.rewrite_model = entries[1].text().into();
             c.model.translation_model = entries[2].text().into();
+            c.model.translation_engine = engines[engine.selected() as usize];
+            c.model.google_api_key = provider_entries[0].text().into();
+            c.model.bing_api_key = provider_entries[1].text().into();
+            c.model.yandex_api_key = provider_entries[2].text().into();
+            c.model.bing_region = region.text().trim().into();
             c.model.cloud_url = entries[3].text().into();
             c.model.cloud_model = entries[4].text().into();
             c.model.api_key_env = entries[5].text().into();
@@ -275,7 +362,7 @@ impl View {
                 Err(e) => msg.set_text(&format!("Settings not saved: {e}")),
             }
         });
-        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 7);
         footer.add_css_class("writy-footer");
         message.set_hexpand(true);
         footer.append(&message);

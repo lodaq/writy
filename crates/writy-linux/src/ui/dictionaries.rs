@@ -88,36 +88,34 @@ pub(super) fn render(
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
-    list.append(&label("Downloaded", "writy-library-title"));
-    let downloaded = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    if sources.is_empty() {
-        downloaded.append(&label("No downloaded dictionaries yet.", "writy-meta"));
+    let custom: Vec<_> = sources
+        .iter()
+        .filter(|source| !CATALOGUE.iter().any(|entry| entry.matches(source)))
+        .collect();
+    if !custom.is_empty() {
+        list.append(&label("Imported", "writy-library-title"));
+        for source in custom {
+            installed_row(list, source, tx, message);
+        }
     }
-    for source in sources {
-        installed_row(&downloaded, source, tx, message);
-    }
-    list.append(&downloaded);
-    list.append(&label("Explore", "writy-library-title"));
-    let explore = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let explore = gtk::Box::new(gtk::Orientation::Vertical, 0);
     for entry in CATALOGUE {
-        let installed = sources.iter().any(|source| entry.matches(source));
+        let source = sources.iter().find(|source| entry.matches(source));
+        let installed = source.is_some();
         let busy = OPERATIONS.with(|active| active.borrow().get(entry.name).copied());
         let row = row(entry.name, entry.detail);
-        row.append(&label(
-            if installed {
-                "Downloaded"
-            } else {
-                "Not downloaded"
-            },
-            "writy-dictionary-state",
-        ));
+        if let Some(source) = source {
+            row.append(&source_controls(source, tx, message));
+        }
         let actions = gtk::FlowBox::new();
         actions.add_css_class("writy-dictionary-actions");
+        actions.set_halign(gtk::Align::Start);
+        actions.set_homogeneous(false);
         actions.set_selection_mode(gtk::SelectionMode::None);
         actions.set_min_children_per_line(1);
         actions.set_max_children_per_line(3);
-        actions.set_column_spacing(8);
-        actions.set_row_spacing(8);
+        actions.set_column_spacing(4);
+        actions.set_row_spacing(4);
         let download = components::action_button(if installed {
             "Download"
         } else {
@@ -135,7 +133,9 @@ pub(super) fn render(
         download.connect_clicked(move |button| {
             install_pack(button, entry, &target, &commands, &status)
         });
-        actions.insert(&download, -1);
+        if !installed {
+            actions.insert(&download, -1);
+        }
         if installed {
             let remove = components::action_button(if busy == Some("Removing…") {
                 "Removing…"
@@ -160,18 +160,18 @@ pub(super) fn render(
             &gtk::LinkButton::with_label(entry.url, "Source & licence"),
             -1,
         );
-        for index in 0..if installed { 3 } else { 2 } {
+        for index in 0..2 {
             actions.child_at_index(index).unwrap().set_focusable(false);
         }
         row.append(&actions);
         explore.append(&row);
     }
     list.append(&explore);
-    list.append(&label("Download dictionaries from Explore, then turn them on or off in Downloaded. Turning one off keeps its data. Remove deletes its data and cached download.", "writy-meta"));
+    list.append(&label("Switch off to keep data without using it. Remove deletes the dictionary and cached download.", "writy-meta"));
 }
 
 fn row(name: &str, detail: &str) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
     row.add_css_class("writy-dictionary-row");
     row.append(&label(name, "writy-title"));
     row.append(&label(detail, "writy-meta"));
@@ -179,7 +179,11 @@ fn row(name: &str, detail: &str) -> gtk::Box {
 }
 fn installed_row(list: &gtk::Box, source: &DictionarySource, tx: &Commands, message: &gtk::Label) {
     let row = row(&source.attribution.name, &source.attribution.license);
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.append(&source_controls(source, tx, message));
+    list.append(&row);
+}
+fn source_controls(source: &DictionarySource, tx: &Commands, message: &gtk::Label) -> gtk::Box {
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let status = label(
         &installed_status(source.entries, source.enabled),
         "writy-dictionary-state",
@@ -223,8 +227,7 @@ fn installed_row(list: &gtk::Box, source: &DictionarySource, tx: &Commands, mess
         }
     });
     controls.append(&toggle);
-    row.append(&controls);
-    list.append(&row);
+    controls
 }
 fn installed_status(count: usize, enabled: bool) -> String {
     format!(

@@ -197,10 +197,10 @@ fn native_component_gallery() {
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
     let view = View::new(&app, tx, Config::default());
     let search = view.borrow().search.clone();
-    search.set_resizable(false);
+    search.set_resizable(true);
     search.present();
     snapshot(&search, "search-empty");
     assert!(!view.borrow().copy.is_sensitive());
@@ -209,17 +209,26 @@ fn native_component_gallery() {
     let copied = display.clipboard();
     copied.set_text("Copied sentence.\nSecond line.");
     primary.set_text("Selected sentence.\nSecond line.");
-    view.borrow()
-        .open_search(Some("stale captured text".into()));
+    view.borrow().open_search(None);
     settle();
     let buffer = view.borrow().editor.buffer();
     assert_eq!(
         buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
         "Selected sentence.\nSecond line."
     );
+    let mut queries = Vec::new();
+    while let Ok((command, _)) = rx.try_recv() {
+        if let Command::Query { text, translate } = command {
+            queries.push((text, translate));
+        }
+    }
+    assert_eq!(
+        queries,
+        vec![("Selected sentence.\nSecond line.".into(), true)],
+        "Alt+G must translate the prefilled selection once, without a later lookup replacing it"
+    );
     primary.set_content(None::<&gdk::ContentProvider>).unwrap();
-    view.borrow()
-        .open_search(Some("stale captured text".into()));
+    view.borrow().open_search(None);
     settle();
     assert_eq!(
         buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
@@ -554,7 +563,7 @@ fn native_component_gallery() {
         .unwrap()
         .downcast::<gtk::Notebook>()
         .unwrap();
-    assert_eq!(preferences.n_pages(), 4);
+    assert_eq!(preferences.n_pages(), 5);
     scroll_tab(&preferences, 1.);
     assert_eq!(
         preferences.current_page(),
@@ -570,8 +579,10 @@ fn native_component_gallery() {
     preferences.set_current_page(Some(1));
     snapshot(&settings[0], "settings-models");
     preferences.set_current_page(Some(2));
-    snapshot(&settings[0], "settings-panels");
+    snapshot(&settings[0], "settings-translation");
     preferences.set_current_page(Some(3));
+    snapshot(&settings[0], "settings-panels");
+    preferences.set_current_page(Some(4));
     snapshot(&settings[0], "settings-dictionaries");
     preferences.set_current_page(Some(0));
     assert_eq!(
@@ -606,7 +617,7 @@ fn native_component_gallery() {
         .downcast::<gtk::Label>()
         .unwrap()
         .set_text("");
-    settings[0].set_resizable(false);
+    settings[0].set_resizable(true);
     settings[0].set_default_size(400, 640);
     snapshot(&settings[0], "settings-narrow");
     assert!(settings[0].width() <= 400);
@@ -618,7 +629,12 @@ fn native_component_gallery() {
         settings[0].width() <= 400,
         "Settings must reflow at larger text sizes"
     );
-    for (index, name) in [(1, "models"), (2, "panels"), (3, "dictionaries")] {
+    for (index, name) in [
+        (1, "models"),
+        (2, "translation"),
+        (3, "panels"),
+        (4, "dictionaries"),
+    ] {
         preferences.set_current_page(Some(index));
         let page = preferences
             .nth_page(Some(index))
@@ -684,9 +700,7 @@ fn native_component_gallery() {
         let mut text = String::new();
         labels(list.upcast_ref(), &mut text);
         assert_eq!(dictionaries::CATALOGUE.len(), 8);
-        assert!(text.contains("Downloaded"));
-        assert!(text.contains("Explore"));
-        assert!(text.contains("Not downloaded"));
+
         assert_eq!(text.lines().filter(|text| *text == "Remove").count(), 2);
         fn action(widget: &gtk::Widget, name: &str, title: &str) -> Option<gtk::Button> {
             if widget.has_css_class("writy-dictionary-row")
@@ -716,11 +730,7 @@ fn native_component_gallery() {
             }
             None
         }
-        assert!(
-            !action(list.upcast_ref(), "GNU GCIDE", "Download")
-                .unwrap()
-                .is_sensitive()
-        );
+        assert!(action(list.upcast_ref(), "GNU GCIDE", "Download").is_none());
         assert!(
             action(list.upcast_ref(), "GNU GCIDE", "Remove")
                 .unwrap()
@@ -734,8 +744,8 @@ fn native_component_gallery() {
         assert!(action(list.upcast_ref(), "Arramooz Alwaseet", "Remove").is_none());
         assert_eq!(
             text.lines().filter(|text| *text == "Download").count(),
-            dictionaries::CATALOGUE.len(),
-            "Every catalogue dictionary needs a one-click installer"
+            dictionaries::CATALOGUE.len() - 2,
+            "Uninstalled catalogue dictionaries need a one-click installer"
         );
         assert!(
             !text.contains("Import…"),
@@ -807,7 +817,7 @@ fn native_component_gallery() {
         dictionaries::render(&list, &tx, &message, &[]);
         text.clear();
         labels(list.upcast_ref(), &mut text);
-        assert!(text.contains("No downloaded dictionaries yet."));
+        assert!(!text.contains("Installed ·"));
         let install = action(list.upcast_ref(), "Arramooz Alwaseet", "Download").unwrap();
         let cache = crate::ipc::database_path()
             .parent()
@@ -831,8 +841,8 @@ fn native_component_gallery() {
         settle();
         let download_position = position.value();
         assert!(
-            download_position > 200.,
-            "Exercise Download below the top of Explore"
+            download_position > 0.,
+            "Exercise Download after scrolling the compact list"
         );
         install.emit_clicked();
         assert!(!install.is_sensitive());
@@ -887,8 +897,7 @@ fn native_component_gallery() {
             "Failed imports must keep the existing dictionary"
         );
         settle();
-        let download = action(list.upcast_ref(), "Arramooz Alwaseet", "Download").unwrap();
-        assert!(!download.is_sensitive());
+        assert!(action(list.upcast_ref(), "Arramooz Alwaseet", "Download").is_none());
         let remove = action(list.upcast_ref(), "Arramooz Alwaseet", "Remove").unwrap();
         remove.emit_clicked();
         assert!(!remove.is_sensitive());

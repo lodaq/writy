@@ -4,7 +4,7 @@ use writy_core::types::{LexicalEntry, Suggestion, TextSnapshot};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
-    Search,
+    Search { text: Option<String> },
     Settings,
     Lookup { text: String },
     Accept,
@@ -24,7 +24,8 @@ impl Command {
         let input = match self {
             Self::Lookup { text }
             | Self::Query { text, .. }
-            | Self::Selection { text: Some(text) } => Some(text),
+            | Self::Selection { text: Some(text) }
+            | Self::Search { text: Some(text) } => Some(text),
             _ => None,
         };
         if input.is_some_and(|text| text.chars().count() > 8192) {
@@ -124,6 +125,20 @@ pub enum UiEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn search_accepts_legacy_messages_and_bounds_captured_selection() {
+        assert!(matches!(
+            serde_json::from_str::<Command>(r#"{"command":"search"}"#).unwrap(),
+            Command::Search { text: None }
+        ));
+        assert!(
+            Command::Search {
+                text: Some("x".repeat(8193))
+            }
+            .validate()
+            .is_err()
+        );
+    }
     #[test]
     fn query_limits_count_unicode_characters_and_reject_instead_of_truncating() {
         assert!(

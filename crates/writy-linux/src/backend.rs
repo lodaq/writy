@@ -357,7 +357,7 @@ impl State {
         match cmd {
             Command::HudInteraction { active } => { self.hud_interacting = active; },
             Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"offline":self.config.offline,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
-            Command::Search=>{let query=self.generation.current.as_ref().map(|s|s.text.clone());self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
+            Command::Search{text}=>{let query=text.or_else(||self.generation.current.as_ref().map(|s|s.text.clone()));self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
             Command::Settings=>{let _=self.ui.try_send(UiEvent::Settings);}
             Command::Lookup{text}=>{self.search=false;self.query(text,true,true,tx).await;}
             Command::Query{text,translate}=>{self.search=true;self.query(text,translate,false,tx).await;}

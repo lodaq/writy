@@ -4,7 +4,7 @@
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
@@ -89,10 +89,10 @@ class Bridge {
         lastBounds=outputBounds();
         const auto window = Desktop::focusState()->window();
         const auto monitor = window ? window->m_monitor.lock() : nullptr;
-        emit({{"type", "focus"}, {"app_id", window ? window->m_class : ""},
+        emit({{"type", "focus"}, {"app_id", window ? window->metadata().appID() : ""},
               {"monitor", monitor ? monitor->m_name : ""},
               {"monitor_geometry", monitor ? Json(lastBounds) : Json(nullptr)},
-              {"pid", window ? static_cast<uint32_t>(window->getPID()) : 0U},
+              {"pid", window ? static_cast<uint32_t>(window->backend().pid()) : 0U},
               {"locked", g_pSessionLockManager->isSessionLocked()},
               {"window_id", window ? std::format("0x{:x}", reinterpret_cast<uintptr_t>(window.get())) : ""}});
     }
@@ -125,9 +125,9 @@ class Bridge {
         const auto symbol = keyboard->m_xkbState ? xkb_state_key_get_one_sym(keyboard->m_xkbState, event.keycode + 8) : XKB_KEY_NoSymbol;
         if (event.state == WL_KEYBOARD_KEY_STATE_PRESSED && !writy::modifierSymbol(symbol)) {
             // Preserve the candidate while the compositor dispatches the dedicated acceptance key.
-            const auto modifiers = keyboard->getModifiers() | g_pInputManager->getModsFromAllKBs();
+            const auto modifiers = static_cast<uint32_t>(keyboard->getModifiers() | g_pInputManager->getModsFromAllKBs());
             if (writy::acceptanceSymbol(symbol, modifiers)) return;
-            const bool shortcut = (modifiers & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) != 0;
+            const bool shortcut = (modifiers & static_cast<uint32_t>(Input::eKeyboardModifiers::HL_MODIFIER_CTRL | Input::eKeyboardModifiers::HL_MODIFIER_ALT | Input::eKeyboardModifiers::HL_MODIFIER_META)) != 0;
             const bool navigation = writy::navigationSymbol(symbol);
             if (shortcut || navigation) { invalidate(shortcut ? "shortcut" : "navigation"); return; }
         }

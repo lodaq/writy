@@ -5,8 +5,8 @@ the Rust daemon. It does not grab devices, replay keys, decode text, run models,
 or consume any key. Each category HUD remains a separate GTK layer surface in
 the Rust application.
 
-It is currently built and runtime tested against **Hyprland 0.56.2** and
-**hyprutils 0.14.2**. Plugins share C++ objects with the compositor; rebuild after
+It is currently built and runtime tested against **Hyprland 0.57.2** and
+**hyprutils 0.14.3**. Plugins share C++ objects with the compositor; rebuild after
 Hyprland/toolchain upgrades. Initialization refuses a mismatched full ABI hash.
 The old `registerCallbackDynamic` API is inert in this version. This bridge uses
 `Event::bus()` and per-device `IKeyboard` signal listeners.

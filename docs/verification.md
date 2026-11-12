@@ -172,3 +172,12 @@ CLI each returned 17 tags. The installed Settings window was visually checked
 with both selectors. Catalogue validation brings the suite to 50 passing Rust
 tests; Clippy and the release build pass. Metadata discovery sends no prose and
 does not change the existing offline inference checks.
+
+## Cold-start search regression
+
+After `cargo build --locked` and building the bridge, run
+`python3 tests/desktop/cold_search.py`. It starts an isolated nested compositor,
+sets a synthetic PRIMARY selection with no Writy daemon running, invokes the
+same `writy search` action bound to Alt+G, and checks that a local mock translator
+receives the selection and that Writy returns the completed translation. It does
+not depend on a public translation service or change the desktop clipboard.

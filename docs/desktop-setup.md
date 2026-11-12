@@ -43,19 +43,18 @@ current monitor and restores the compact panel on the next click. Drag across
 result text to select it; Arabic content is aligned to the right.
 
 Alt+G fills the input from the current text selection, or from the clipboard
-when there is no selected text. Multi-line text is preserved.
+when there is no selected text, then translates that prefilled text automatically.
+This also works when the shortcut starts the daemon. Multi-line text is preserved.
 
-Settings → Dictionary library has two sections. **Explore** always lists all eight
+Settings → Dictionaries lists all eight
 sources: both FreeDict directions, English and Arabic Wiktionary, Open English
 WordNet, Arramooz Alwaseet, GNU GCIDE, and Princeton WordNet 3.0. GCIDE includes
 historical English usage; Princeton WordNet overlaps Open English WordNet.
 Publisher and licence links remain available beside each source.
 
 Click **Download** once to download, extract, convert, and import in the
-background. The dictionary then appears in **Downloaded** with an enabled
-on/off switch. Switches save immediately and affect lookups and completions;
-turning one off keeps its data. In Explore, downloaded sources show a disabled
-Download button and an active **Remove** button. Remove immediately deletes the
+background. The same row then shows an enabled on/off switch. Switches save immediately and affect lookups and completions;
+turning one off keeps its data. Installed sources show an active **Remove** button. Remove immediately deletes the
 source's entries, preference, and managed cached download. Download becomes
 available again. Progress and failures are shown without blocking the desktop.
 
@@ -125,3 +124,32 @@ To stop future automatic activation, remove only the marked Writy section from
 `~/.config/hypr/hyprland.lua`, then run `hyprctl reload`. This preserves other
 configuration changes made before or after the installation. The installed
 binary, bridge, service and dictionary data can be removed separately.
+
+## Translation provider setup
+
+Open Settings → Translation. Choose Google, Bing or Yandex and click Save
+settings; no key is needed. Turn off General → Offline only to allow online
+requests. Changes apply without restarting. Keyless services are unofficial and
+can fail or rate-limit requests; local Ollama remains the fallback.
+
+For an optional official API, expand its credential section and configure it:
+
+- Google: create a Cloud project, enable billing and Cloud Translation API,
+  create an API key under APIs & Services → Credentials, and restrict it to
+  Cloud Translation API. Paste it into Google API key.
+- Microsoft (Bing): create a public Azure Translator resource, open Resource
+  Management → Keys and Endpoint, and paste Key 1. Copy the region into
+  Microsoft region if using a regional resource; leave blank for Global.
+- Yandex: create a service account in your folder, grant ai.translate.user,
+  create an API key with yc.ai.translate.execute scope, and paste the key.
+- Apertium: no credentials, but its public API currently has no English–Arabic
+  pair, so requests fall back to Ollama.
+
+The setup links in each provider section open its official instructions. Saved
+keys are plain text in the owner-only configuration file. Keep them out of
+screenshots and shared config copies. Empty key fields use environment variables,
+then keyless translation when no key is set.
+
+After a Hyprland upgrade, rebuild the bridge and run its nested smoke test before
+loading it. With no bridge loaded, `writy status` reports bridge_connected=false;
+automatic typing and selection cannot identify the focused app and remain inactive.

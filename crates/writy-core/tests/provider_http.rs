@@ -239,3 +239,41 @@ async fn source_echo_is_not_returned_as_a_translation() {
         .unwrap();
     assert!(format!("{error:#}").contains("repeated the source"));
 }
+
+#[tokio::test]
+async fn offline_skips_selected_online_engine() {
+    for engine in [
+        writy_core::config::TranslationEngine::Google,
+        writy_core::config::TranslationEngine::Bing,
+        writy_core::config::TranslationEngine::Yandex,
+    ] {
+        let server = Server::start(complete(), false).await;
+        let mut config = server.config();
+        config.model.translation_engine = engine;
+        let result = ModelService::new(config)
+            .unwrap()
+            .generate(snapshot(), Capability::Translate)
+            .await
+            .unwrap();
+        assert!(result.provider.starts_with("Ollama"));
+        assert!(result.notice.is_none());
+    }
+}
+
+#[tokio::test]
+async fn oversized_keyless_bing_input_falls_back_without_partial_translation() {
+    let server = Server::start(complete(), false).await;
+    let mut config = server.config();
+    config.offline = false;
+    config.model.translation_engine = writy_core::config::TranslationEngine::Bing;
+    let mut input = snapshot();
+    input.text = "a".repeat(1001);
+    let result = ModelService::new(config)
+        .unwrap()
+        .generate(input, Capability::Translate)
+        .await
+        .unwrap();
+    assert!(result.provider.starts_with("Ollama"));
+    assert!(result.notice.unwrap().contains("1000 UTF-16"));
+    assert_eq!(result.snapshot.text.chars().count(), 1001);
+}

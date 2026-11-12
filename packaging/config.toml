@@ -11,6 +11,8 @@ min_rephrase_words = 2
 ollama_url = "http://127.0.0.1:11434"
 rewrite_model = "gemma3:4b"
 translation_model = "translategemma:4b"
+# model (existing routing), google, bing, yandex, or apertium; direct HTTP APIs.
+translation_engine = "model"
 cloud_url = ""
 cloud_model = ""
 api_key_env = "WRITY_API_KEY"

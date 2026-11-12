@@ -513,6 +513,7 @@ struct View {
     config: Config,
     search: gtk::ApplicationWindow,
     editor: gtk::TextView,
+    search_debounce: Rc<RefCell<Option<glib::SourceId>>>,
     results: gtk::Notebook,
     tab_copy_texts: Rc<RefCell<Vec<String>>>,
     status: gtk::Label,
@@ -541,16 +542,16 @@ impl View {
         let search = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Writy — English ↔ العربية")
-            .default_width(1200)
-            .default_height(960)
+            .default_width(1000)
+            .default_height(760)
             .build();
         search.add_css_class("writy-main");
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 24);
-        root.set_margin_top(24);
-        root.set_margin_bottom(48);
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        root.set_margin_top(14);
+        root.set_margin_bottom(29);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         header.add_css_class("writy-search-header");
-        header.set_margin_bottom(8);
+        header.set_margin_bottom(5);
         let name = label("Writy", "writy-header");
         name.set_wrap(false);
         name.set_hexpand(true);
@@ -561,7 +562,7 @@ impl View {
         );
         languages.set_direction(gtk::TextDirection::Ltr);
         languages.set_hexpand(true);
-        let header_details = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        let header_details = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         header_details.set_hexpand(false);
         header_details.append(&languages);
         let toolbar = gtk::HeaderBar::new();
@@ -590,11 +591,11 @@ impl View {
             .build();
         input_scroll.add_css_class("writy-input");
         editor.update_property(&[gtk::accessible::Property::Label("Word or sentence")]);
-        let input = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let input = gtk::Box::new(gtk::Orientation::Vertical, 7);
         input.append(&label("Word or sentence", "writy-title"));
         input.append(&input_scroll);
         root.append(&input);
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         actions.add_css_class("writy-search-actions");
         for (name, translate) in [("Look up or improve", false), ("Translate", true)] {
             let b = components::action_button(name);
@@ -629,8 +630,8 @@ impl View {
         copy.set_halign(gtk::Align::Fill);
         copy.set_sensitive(false);
         actions.append(&copy);
-        let controls = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        controls.set_margin_bottom(16);
+        let controls = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        controls.set_margin_bottom(10);
         controls.append(&actions);
         root.append(&controls);
         let status = label(
@@ -639,7 +640,7 @@ impl View {
         );
         let copy_status = status.clone();
         copy.connect_clicked(move |_| copy_status.set_text("Copied to clipboard"));
-        let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         status_row.add_css_class("writy-search-status");
         let activity = gtk::Spinner::new();
         activity.set_visible(false);
@@ -729,6 +730,7 @@ impl View {
         });
         search.add_controller(key);
         let debounce = Rc::new(RefCell::new(None::<glib::SourceId>));
+        let search_debounce = debounce.clone();
         let qtx = tx.clone();
         editor.buffer().connect_changed(move |buffer| {
             if let Some(id) = debounce.borrow_mut().take() {
@@ -760,6 +762,7 @@ impl View {
             config,
             search,
             editor,
+            search_debounce,
             results,
             tab_copy_texts,
             status,
@@ -777,25 +780,42 @@ impl View {
     }
     fn open_search(&self, fallback: Option<String>) {
         let editor = self.editor.clone();
+        let debounce = self.search_debounce.clone();
         let search = self.search.clone();
         let tx = self.tx.clone();
         self.hud.window.set_visible(false);
         glib::MainContext::default().spawn_local(async move {
             let display = gtk::prelude::WidgetExt::display(&search);
             let mut query = fallback;
-            // Read PRIMARY before presenting the window changes keyboard focus.
-            for clipboard in [display.primary_clipboard(), display.clipboard()] {
-                if let Ok(Ok(Some(text))) =
-                    glib::future_with_timeout(Duration::from_secs(1), clipboard.read_text_future())
-                        .await
-                    && !text.trim().is_empty()
-                {
-                    query = Some(text.to_string());
-                    break;
+            // CLI-captured text survives a cold start; GTK clipboard access may require focus.
+            if query.is_none() {
+                // Read PRIMARY before presenting the window changes keyboard focus.
+                for clipboard in [display.primary_clipboard(), display.clipboard()] {
+                    if let Ok(Ok(Some(text))) = glib::future_with_timeout(
+                        Duration::from_secs(1),
+                        clipboard.read_text_future(),
+                    )
+                    .await
+                        && !text.trim().is_empty()
+                    {
+                        query = Some(text.to_string());
+                        break;
+                    }
                 }
             }
             if let Some(query) = query {
                 editor.buffer().set_text(&query);
+                // The editor change schedules a lookup; it must not cancel this translation.
+                if let Some(pending) = debounce.borrow_mut().take() {
+                    pending.remove();
+                }
+                send(
+                    &tx,
+                    Command::Query {
+                        text: query,
+                        translate: true,
+                    },
+                );
             } else {
                 let buffer = editor.buffer();
                 let text = buffer
@@ -967,7 +987,7 @@ impl View {
                 selected_page = index as u32;
             }
         }
-        let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let details = gtk::Box::new(gtk::Orientation::Vertical, 7);
         details.add_css_class("writy-result-section");
         let title = label("Sources", "writy-section-title");
         details.append(&title);

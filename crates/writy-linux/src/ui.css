@@ -9,10 +9,10 @@ window.writy-hud { background: transparent; }
     background: @writy_surface;
     border: 1px solid alpha(@theme_fg_color, .12);
     border-radius: 14px;
-    padding: 14px 16px;
+    padding: 8px 10px;
 }
 .writy-hud .writy-card {
-    padding: 8px 12px;
+    padding: 5px 7px;
     border-radius: 12px;
     background: mix(@theme_base_color, @theme_bg_color, .2);
     border-color: alpha(@theme_fg_color, .18);
@@ -27,7 +27,7 @@ window.writy-hud { background: transparent; }
 .writy-body { font-size: 1em; }
 .writy-meta { font-size: .9em; color: alpha(@theme_fg_color, .78); }
 .writy-hud .writy-meta, .writy-hud .writy-title { font-size: .8em; }
-.writy-query { font-size: 1.35em; padding: 12px; border-radius: 12px; }
+.writy-query { font-size: 1.1em; padding: 7px; border-radius: 12px; }
 .writy-query text { background: @theme_base_color; }
 .writy-input {
     background: @theme_base_color;
@@ -35,11 +35,11 @@ window.writy-hud { background: transparent; }
     border-radius: 12px;
 }
 .writy-input:focus-within { border-color: @theme_selected_bg_color; }
-.writy-header { font-size: 2em; font-weight: 700; letter-spacing: -.6px; }
+.writy-header { font-size: 1.3em; font-weight: 700; letter-spacing: -.6px; }
 .writy-status { font-size: .9em; color: alpha(@theme_fg_color, .78); }
 .writy-main button, .writy-settings button, .writy-hud button {
     border-radius: 8px;
-    padding: 7px 12px;
+    padding: 4px 7px;
     font-weight: 500;
     box-shadow: none;
 }
@@ -57,21 +57,21 @@ window.writy-hud { background: transparent; }
 }
 .writy-settings entry, .writy-settings dropdown {
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 4px 6px;
 }
-.writy-settings checkbutton { padding: 6px 0; }
-.writy-hud button { padding: 3px 8px; font-size: .8em; }
+.writy-settings checkbutton { padding: 4px 0; }
+.writy-hud button { padding: 2px 5px; font-size: .8em; }
 
 .writy-toolbar {
     background: @writy_bg;
     border-bottom: 1px solid alpha(@theme_fg_color, .08);
     box-shadow: none;
 }
-.writy-empty { padding: 24px; }
-.writy-empty image { color: alpha(@theme_fg_color, .55); margin-bottom: 8px; }
+.writy-empty { padding: 14px; }
+.writy-empty image { color: alpha(@theme_fg_color, .55); margin-bottom: 5px; }
 .writy-empty-title { font-size: 1.2em; font-weight: 600; letter-spacing: -.2px; }
 .writy-footer {
-    padding: 12px 20px;
+    padding: 7px 12px;
     background: @writy_bg;
     border-top: 1px solid alpha(@theme_fg_color, .12);
 }
@@ -86,8 +86,8 @@ window.writy-hud { background: transparent; }
 .writy-main button:disabled, .writy-settings button:disabled, .writy-hud button:disabled {
     opacity: .45;
 }
-.writy-settings expander > title { padding: 8px 0; }
-.writy-settings dropdown button { padding: 6px 10px; }
+.writy-settings expander > title { padding: 5px 0; }
+.writy-settings dropdown button { padding: 4px 6px; }
 .writy-settings checkbutton { min-height: 24px; }
 
 
@@ -123,14 +123,14 @@ window.writy-hud { background: transparent; }
     box-shadow: inset 0 1px alpha(@theme_base_color, .4);
 }
 .writy-hud-toolbar {
-    padding: 12px 16px;
+    padding: 7px 10px;
     border-bottom: 1px solid alpha(@theme_fg_color, .12);
 }
 .writy-hud-query { font-size: 1.15em; font-weight: 600; letter-spacing: -.2px; }
-.writy-hud-section { padding: 12px 16px; border-bottom: 1px solid alpha(@theme_fg_color, .09); }
+.writy-hud-section { padding: 7px 10px; border-bottom: 1px solid alpha(@theme_fg_color, .09); }
 .writy-hud-section .writy-body { font-size: 1em; }
 .writy-hud-section .writy-meta { font-size: .8em; }
-.writy-hud-footer { padding: 8px 16px; border-top: 1px solid alpha(@theme_fg_color, .09); }
+.writy-hud-footer { padding: 5px 10px; border-top: 1px solid alpha(@theme_fg_color, .09); }
 .writy-hud-header button {
     min-width: 28px;
     min-height: 28px;
@@ -141,22 +141,22 @@ window.writy-hud { background: transparent; }
 .writy-reduced-motion .writy-hud-header button { transition: none; }
 .writy-reduced-motion .writy-hud-header button:active { transform: none; }
 
-.writy-hud-empty { padding: 8px 16px; }
+.writy-hud-empty { padding: 5px 10px; }
 .writy-hud-empty .writy-body { font-size: .9em; }
 
 .writy-result-tabs > header > tabs { min-height: 40px; }
-.writy-result-tabs > header > tabs > tab { padding: 8px 12px; }
+.writy-result-tabs > header > tabs > tab { padding: 5px 7px; }
 
-.writy-hud-tabs > header > tabs > tab { padding: 8px 10px; }
+.writy-hud-tabs > header > tabs > tab { padding: 5px 6px; }
 .writy-hud-tabs > header > tabs > tab label { font-size: .8em; }
 
-.writy-hud-toolbar { padding: 14px 16px 12px; }
+.writy-hud-toolbar { padding: 8px 10px 7px; }
 .writy-hud-header button { min-width: 32px; min-height: 32px; border-radius: 8px; }
 .writy-hud-header button:hover { background: alpha(@theme_fg_color, .1); }
 .writy-hud-query { font-size: 1.25em; }
 .writy-hud-tabs > header { background: alpha(@theme_fg_color, .035); }
 .writy-hud-fullscreen .writy-hud-surface { border-radius: 0; border-width: 0; }
-.writy-dictionary-row { padding: 12px 0; border-bottom: 1px solid alpha(@theme_fg_color, .1); }
+.writy-dictionary-row { padding: 7px 0; border-bottom: 1px solid alpha(@theme_fg_color, .1); }
 .writy-dictionary-state { font-size: .85em; color: alpha(@theme_fg_color, .8); }
 
 /* Source headings bind each dictionary to its own readable group. */
@@ -164,19 +164,19 @@ window.writy-hud { background: transparent; }
     font-size: .8em;
     font-weight: 600;
     color: alpha(@theme_fg_color, .7);
-    margin-top: 8px;
+    margin-top: 5px;
 }
-.writy-result-section, .writy-hud-section { padding: 18px 20px 24px; }
+.writy-result-section, .writy-hud-section { padding: 11px 12px 14px; }
 .writy-result-section separator, .writy-hud-section separator {
     min-height: 1px;
     background: alpha(@theme_fg_color, .2);
-    margin-top: 8px;
-    margin-bottom: 4px;
+    margin-top: 5px;
+    margin-bottom: 2px;
 }
 .writy-hud-tabs > header > tabs > tab,
 .writy-result-tabs > header > tabs > tab {
     min-height: 34px;
-    padding: 6px 14px;
+    padding: 4px 8px;
     border-right: 1px solid alpha(@theme_fg_color, .07);
 }
 .writy-hud-tabs > header > tabs > tab:checked,
@@ -191,18 +191,18 @@ window.writy-hud { background: transparent; }
 @define-color writy_link mix(@theme_fg_color, @writy_accent, .45);
 @define-color writy_destructive mix(@theme_fg_color, @error_color, .3);
 @define-color writy_button_surface mix(@writy_surface, @theme_fg_color, .07);
-.writy-settings { font-size: 1.08em; }
-.writy-hud { font-size: 1.08em; }
+.writy-settings { font-size: .95em; }
+.writy-hud { font-size: .95em; }
 .writy-settings .writy-title { font-size: 1em; letter-spacing: 0; }
-.writy-settings .writy-section-title { font-size: 1.55em; letter-spacing: -.3px; }
-.writy-settings .writy-card { padding: 16px 20px; }
-.writy-settings .writy-toolbar { padding: 6px 12px; }
+.writy-settings .writy-section-title { font-size: 1.15em; letter-spacing: -.3px; }
+.writy-settings .writy-card { padding: 10px 12px; }
+.writy-settings .writy-toolbar { padding: 4px 7px; }
 .writy-settings .writy-toolbar .writy-title { font-size: 1.1em; }
 .writy-settings entry {
     background: alpha(@theme_fg_color, .035);
     border: 1px solid alpha(@theme_fg_color, .18);
     min-height: 28px;
-    padding: 6px 12px;
+    padding: 4px 7px;
     box-shadow: none;
 }
 .writy-settings entry:focus-within { border-color: @writy_accent; }
@@ -221,25 +221,25 @@ window.writy-hud { background: transparent; }
 .writy-settings button.destructive-action { color: @writy_destructive; }
 .writy-settings button.link { background: transparent; border-color: transparent; color: @writy_link; }
 .writy-settings switch:checked { background: @writy_accent; border-color: @writy_accent; }
-.writy-preference-row { padding: 10px 0; }
+.writy-preference-row { padding: 6px 0; }
 .writy-preference-row + .writy-preference-row { border-top: 1px solid alpha(@theme_fg_color, .1); }
 .writy-preference-title { font-weight: 500; }
-.writy-library-title { font-size: 1.15em; font-weight: 600; margin-top: 12px; }
+.writy-library-title { font-size: 1.15em; font-weight: 600; margin-top: 7px; }
 .writy-dictionary-actions > flowboxchild { padding: 0; background: transparent; }
 .writy-settings button.writy-download-action { color: @writy_link; }
 .writy-settings-tabs > header, .writy-hud-tabs > header {
     background: transparent;
     border: none;
     border-bottom: 1px solid alpha(@theme_fg_color, .12);
-    padding: 10px 12px;
+    padding: 6px 7px;
     box-shadow: none;
 }
 .writy-settings-tabs > header > tabs > tab, .writy-hud-tabs > header > tabs > tab {
     border: none;
     border-radius: 10px;
     min-height: 26px;
-    padding: 6px 14px;
-    margin: 0 4px;
+    padding: 4px 8px;
+    margin: 0 2px;
     background: alpha(@theme_fg_color, .05);
     box-shadow: none;
 }
@@ -254,23 +254,23 @@ window.writy-hud { background: transparent; }
 .writy-hud-section { border-bottom: none; }
 .writy-hud-header button:checked { background: alpha(@writy_accent, .18); }
 window.writy-main { background: @writy_bg; }
-.writy-main { font-size: 1.08em; color: @theme_fg_color; }
+.writy-main { font-size: .95em; color: @theme_fg_color; }
 .writy-main .writy-toolbar {
     background: transparent;
     border: none;
     min-height: 36px;
-    padding: 4px 12px;
+    padding: 2px 7px;
 }
-.writy-main .writy-header { font-size: 1.9em; letter-spacing: -.5px; }
+.writy-main .writy-header { font-size: 1.3em; letter-spacing: -.5px; }
 .writy-main .writy-search-header .writy-meta { font-size: 1em; }
-.writy-main .writy-search-header separator { margin: 12px 0; background: alpha(@theme_fg_color, .2); }
+.writy-main .writy-search-header separator { margin: 7px 0; background: alpha(@theme_fg_color, .2); }
 .writy-main .writy-search-header button {
     background: transparent;
     background-image: none;
     border: none;
     min-width: 36px;
     min-height: 36px;
-    padding: 4px;
+    padding: 2px;
 }
 .writy-main .writy-search-header button image { -gtk-icon-size: 28px; }
 .writy-main .writy-title { font-size: 1.1em; letter-spacing: 0; }
@@ -280,7 +280,7 @@ window.writy-main { background: @writy_bg; }
     border-radius: 14px;
 }
 .writy-main .writy-input:focus-within { border-color: @writy_accent; }
-.writy-main .writy-query { font-size: 1.4em; padding: 12px 16px; background: transparent; }
+.writy-main .writy-query { font-size: 1.1em; padding: 7px 10px; background: transparent; }
 .writy-main .writy-query text { background: transparent; }
 .writy-main button {
     background: alpha(@theme_fg_color, .09);
@@ -296,7 +296,7 @@ window.writy-main { background: @writy_bg; }
     color: white;
 }
 .writy-main button.suggested-action:hover { background: shade(@writy_accent, 1.1); }
-.writy-main .writy-search-actions button { min-height: 32px; padding: 6px 18px; font-size: 1em; }
+.writy-main .writy-search-actions button { min-height: 32px; padding: 4px 11px; font-size: 1em; }
 .writy-main .writy-search-status { font-size: .85em; }
 .writy-main .writy-result-tabs {
     border: 1px solid alpha(@theme_fg_color, .18);
@@ -307,7 +307,7 @@ window.writy-main { background: @writy_bg; }
     background: transparent;
     border: none;
     border-bottom: 1px solid alpha(@theme_fg_color, .1);
-    padding: 12px 20px;
+    padding: 7px 12px;
     box-shadow: none;
 }
 .writy-main .writy-result-tabs > header > tabs { background: transparent; }
@@ -315,8 +315,8 @@ window.writy-main { background: @writy_bg; }
     min-height: 28px;
     border: none;
     border-radius: 14px;
-    padding: 6px 18px;
-    margin: 0 4px;
+    padding: 4px 11px;
+    margin: 0 2px;
     background: alpha(@theme_fg_color, .05);
     box-shadow: none;
     font-size: 1em;
@@ -327,14 +327,14 @@ window.writy-main { background: @writy_bg; }
 }
 .writy-main .writy-result-tabs > stack { border: none; background: transparent; }
 .writy-main .writy-result-section {
-    padding: 20px 32px 32px;
+    padding: 12px 19px 19px;
     background: transparent;
     border: none;
     border-radius: 0;
 }
 .writy-main .writy-result-header .writy-title, .writy-main .writy-section-title { font-size: 1em; font-weight: 600; }
 .writy-result-header > flowboxchild { padding: 0; background: transparent; }
-.writy-main .writy-result-section button { padding: 4px 12px; font-size: .9em; }
+.writy-main .writy-result-section button { padding: 2px 7px; font-size: .9em; }
 .writy-main .writy-source-title {
     font-size: .9em;
     font-weight: 400;
@@ -345,10 +345,10 @@ window.writy-main { background: @writy_bg; }
     border-top: 1px solid alpha(@theme_fg_color, .12);
     padding-top: 20px;
 }
-.writy-main .writy-result-entry { padding: 4px 16px 14px 0; }
+.writy-main .writy-result-entry { padding: 2px 10px 8px 0; }
 .writy-main .writy-result-entry:last-child { padding-bottom: 4px; }
 .writy-main .writy-entry-headword {
-    font-size: 1.4em;
+    font-size: 1.1em;
     font-weight: 600;
     letter-spacing: 0;
 }

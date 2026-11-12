@@ -165,7 +165,20 @@ fn run() -> Result<()> {
         return rt.block_on(dictionary_action(action));
     }
     let command = match action {
-        Action::Search | Action::Translate => Command::Search,
+        Action::Search | Action::Translate => {
+            // Capture through data-control before startup or presenting GTK can change focus.
+            let text = rt.block_on(async {
+                for primary in [true, false] {
+                    if let Ok(text) = clipboard_text(primary).await
+                        && !text.trim().is_empty()
+                    {
+                        return Some(text);
+                    }
+                }
+                None
+            });
+            Command::Search { text }
+        }
         Action::Settings => Command::Settings,
         Action::Accept => Command::Accept,
         Action::Copy => Command::Copy,
@@ -180,7 +193,7 @@ fn run() -> Result<()> {
             json,
         } => {
             let text = if selection {
-                rt.block_on(primary_selection())?
+                rt.block_on(clipboard_text(true))?
             } else {
                 text.join(" ")
             };
@@ -213,7 +226,7 @@ fn run() -> Result<()> {
         Err(_)
             if matches!(
                 command,
-                Command::Search | Command::Settings | Command::Lookup { .. }
+                Command::Search { .. } | Command::Settings | Command::Lookup { .. }
             ) =>
         {
             std::process::Command::new(std::env::current_exe()?)
@@ -319,10 +332,14 @@ async fn dictionary_action(action: DictAction) -> Result<()> {
     Ok(())
 }
 
-async fn primary_selection() -> Result<String> {
+async fn clipboard_text(primary: bool) -> Result<String> {
     use tokio::io::AsyncReadExt;
-    let mut child = tokio::process::Command::new("wl-paste")
-        .args(["--primary", "--no-newline"])
+    let mut command = tokio::process::Command::new("wl-paste");
+    command.arg("--no-newline");
+    if primary {
+        command.arg("--primary");
+    }
+    let mut child = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -347,7 +364,7 @@ async fn primary_selection() -> Result<String> {
     let status = tokio::time::timeout(std::time::Duration::from_secs(1), child.wait())
         .await
         .context("selection reader timed out")??;
-    ensure!(status.success(), "PRIMARY selection is unavailable");
+    ensure!(status.success(), "clipboard text is unavailable");
     Ok(String::from_utf8(bytes)?)
 }
 

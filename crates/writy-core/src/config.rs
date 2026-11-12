@@ -25,10 +25,45 @@ pub struct Models {
     pub ollama_url: String,
     pub rewrite_model: String,
     pub translation_model: String,
+    pub translation_engine: TranslationEngine,
+    pub google_api_key: String,
+    pub bing_api_key: String,
+    pub bing_region: String,
+    pub yandex_api_key: String,
     pub cloud_url: String,
     pub cloud_model: String,
     pub api_key_env: String,
     pub timeout_secs: u64,
+}
+/// Model preserves the existing cloud/Ollama routing; other engines use direct HTTP APIs.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TranslationEngine {
+    #[default]
+    Model,
+    Google,
+    Bing,
+    Yandex,
+    Apertium,
+}
+impl TranslationEngine {
+    pub fn key_env(self) -> &'static str {
+        match self {
+            Self::Google => "WRITY_GOOGLE_API_KEY",
+            Self::Bing => "WRITY_BING_API_KEY",
+            Self::Yandex => "WRITY_YANDEX_API_KEY",
+            Self::Model | Self::Apertium => "",
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Google => "google",
+            Self::Bing => "bing",
+            Self::Yandex => "yandex",
+            Self::Apertium => "apertium",
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -50,6 +85,11 @@ impl Default for Models {
             ollama_url: "http://127.0.0.1:11434".into(),
             rewrite_model: "gemma3:4b".into(),
             translation_model: "translategemma:4b".into(),
+            translation_engine: TranslationEngine::Model,
+            google_api_key: String::new(),
+            bing_api_key: String::new(),
+            bing_region: String::new(),
+            yandex_api_key: String::new(),
             cloud_url: String::new(),
             cloud_model: String::new(),
             api_key_env: "WRITY_API_KEY".into(),
@@ -212,8 +252,18 @@ mod tests {
     }
     #[test]
     fn defaults_roundtrip_and_validate() {
-        let c: Config =
-            toml::from_str(&toml::to_string_pretty(&Config::default()).unwrap()).unwrap();
+        let mut original = Config::default();
+        original.model.google_api_key = "synthetic-google-key".into();
+        original.model.bing_api_key = "synthetic-bing-key".into();
+        original.model.bing_region = "eastus".into();
+        original.model.yandex_api_key = "synthetic-yandex-key".into();
+        let c: Config = toml::from_str(&toml::to_string_pretty(&original).unwrap()).unwrap();
         c.validate().unwrap();
+        assert_eq!(c.model.google_api_key, original.model.google_api_key);
+        assert_eq!(c.model.bing_api_key, original.model.bing_api_key);
+        assert_eq!(c.model.bing_region, "eastus");
+        assert_eq!(c.model.yandex_api_key, original.model.yandex_api_key);
+        let legacy: Config = toml::from_str("enabled = true").unwrap();
+        assert!(legacy.model.google_api_key.is_empty());
     }
 }

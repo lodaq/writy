@@ -33,7 +33,41 @@ The HUD can switch between compact and fullscreen views. Panel content scrolls i
 
 When a cloud endpoint and credentials are configured, enabled applications can
 send text automatically for translation and rewriting. Local dictionaries and
-local models provide the offline path. `offline = true` disables cloud use.
+local models provide the offline path. `offline = true` disables all online translation and cloud use.
+
+Settings → Translation offers Google, Microsoft Translator (Bing), Yandex and Apertium
+for selection and search translation through direct HTTP APIs. Set
+`[model] translation_engine` to `"google"`, `"bing"`, `"yandex"` or `"apertium"`,
+or use the engine picker. The default `"model"` preserves existing routing.
+Google, Bing and Yandex work without API keys: select the engine and click
+Save settings. Turn off General → Offline only to permit online requests.
+These keyless web/client interfaces are unofficial and may change, rate-limit
+requests, or reject them. Google keyless accepts up to 5000 characters and Bing
+up to 1000 UTF-16 units; longer selections use local Ollama with a notice.
+Yandex keyless accepts Writy's normal input limit. See the
+[keyless checks and implementation notes](docs/keyless-translation.md).
+
+Optional official API keys can be entered under each provider's expandable
+section. Saved keys take precedence over environment variables; either selects
+the official API instead of the keyless interface. Clear the saved key and remove
+its environment variable to return to keyless mode. Keys are stored as plain text
+in config.toml with owner-only read/write permissions.
+
+- Google: optional `WRITY_GOOGLE_API_KEY` for Cloud Translation Basic.
+- Bing: optional `WRITY_BING_API_KEY` for Azure Translator; set `WRITY_BING_REGION`
+  when required by the Azure resource. The region is unused in keyless mode.
+- Yandex: optional `WRITY_YANDEX_API_KEY`, a service-account API key with translation access.
+- Apertium: no key; its public APy API currently has no English–Arabic pair.
+
+Official APIs may require billing setup. All online translation sends selected
+or searched text to the chosen service. Failures fall back to local Ollama with a
+notice; offline mode skips all online engines. Live writing assistance continues
+using language models. No external translation command is needed.
+
+API references: [Google](https://docs.cloud.google.com/translate/docs/reference/rest/v2/translate),
+[Microsoft](https://learn.microsoft.com/en-us/azure/ai-services/translator/text-translation/reference/authentication),
+[Yandex](https://aistudio.yandex.ru/en/docs/translate/api-ref/Translation/translate),
+[Apertium](https://wiki.apertium.org/wiki/Apertium-apy).
 
 Password-role detection and app blocklists are best effort. Opaque fields and
 hidden terminal password prompts may not identify themselves. Prose mode does

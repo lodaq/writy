@@ -60,19 +60,13 @@ timeout_secs = 1
         if args.with_model:
             app_config=base / "config/writy/config.toml"
             app_config.write_text(app_config.read_text().replace("idle_ms = 10000", "idle_ms = 300").replace("min_rephrase_words = 100", "min_rephrase_words = 2").replace("127.0.0.1:9", "127.0.0.1:11434").replace("timeout_secs = 1", "timeout_secs = 30"))
-        config = base / "hyprland.conf"
-        config.write_text("""monitor = , 900x700@60, auto, 1
-animations {
- enabled = false
-}
-misc {
- disable_hyprland_logo = true
- disable_splash_rendering = true
-}
-input {
- kb_layout = us,ara
- resolve_binds_by_sym = true
-}
+        config = base / "hyprland.lua"
+        config.write_text("""hl.monitor({output = "", mode = "900x700@60", position = "auto", scale = 1})
+hl.config({
+ animations = {enabled = false},
+ misc = {disable_hyprland_logo = true, disable_splash_rendering = true},
+ input = {kb_layout = "us,ara", resolve_binds_by_sym = true}
+})
 """)
         acceptance = base / "accept.sh"
         acceptance.write_text("#!/bin/sh\n" + "\n".join(
@@ -80,7 +74,7 @@ input {
             for command in ("status", "accept", "status")) + "\n")
         acceptance.chmod(0o700)
         with config.open("a") as stream:
-            stream.write("\nbind = CTRL ALT, Return, exec, " + shlex.quote(str(acceptance)) + "\n")
+            stream.write(f'hl.bind("CTRL + ALT + Return", hl.dsp.exec_cmd({json.dumps(str(acceptance))}))\n')
         env = dict(os.environ, XDG_RUNTIME_DIR=str(base), XDG_CONFIG_HOME=str(base / "config"),
                    XDG_DATA_HOME=str(base / "data"), XDG_CACHE_HOME=str(base / "cache"),
                    WAYLAND_DISPLAY=str(original_display), HYPRLAND_NO_SD_VARS="1",
@@ -125,6 +119,11 @@ input {
                         fixture.stdin.flush()
                 return
             def ctl(*command):
+                if command[:2] == ("dispatch", "movecursor"):
+                    x, y = map(int, command[2].split())
+                    command = ("dispatch", f"hl.dsp.cursor.move({{x={x}, y={y}}})")
+                elif command[:2] == ("dispatch", "focuswindow"):
+                    command = ("dispatch", f"hl.dsp.focus({{window={json.dumps(command[2])}}})")
                 return subprocess.run(["hyprctl", "--instance", signature, *command], env=nested_env,
                                       capture_output=True, text=True, check=True, timeout=4).stdout
             def cli(*command):

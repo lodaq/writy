@@ -53,9 +53,9 @@ impl HudStack {
         });
         let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
         surface.add_css_class("writy-hud-surface");
-        let header = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 5);
         header.add_css_class("writy-hud-toolbar");
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         toolbar.add_css_class("writy-hud-header");
         let title = label("Writing assistant", "writy-title");
         title.set_wrap(false);
@@ -73,7 +73,7 @@ impl HudStack {
             (
                 "window-new-symbolic",
                 "Open in search · Alt+G",
-                Command::Search,
+                Command::Search { text: None },
             ),
             ("window-close-symbolic", "Dismiss panel", Command::Dismiss),
         ] {
@@ -90,7 +90,7 @@ impl HudStack {
         query.set_wrap(false);
         query.set_ellipsize(gtk::pango::EllipsizeMode::End);
         header.append(&query);
-        let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let activity = gtk::Spinner::new();
         status_row.append(&activity);
         let status = label("", "writy-meta");
@@ -108,10 +108,10 @@ impl HudStack {
         tabs.set_vexpand(true);
         let mut sections = BTreeMap::new();
         for (category, title) in CATEGORIES {
-            let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
+            let card = gtk::Box::new(gtk::Orientation::Vertical, 7);
             card.add_css_class("writy-hud-section");
             card.set_valign(gtk::Align::Start);
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
             row.add_css_class("writy-hud-header");
             let heading = label(title, "writy-title");
             heading.set_hexpand(true);
@@ -129,7 +129,7 @@ impl HudStack {
             body.set_yalign(0.);
             body.set_valign(gtk::Align::Start);
             card.append(&body);
-            let responses = gtk::Box::new(gtk::Orientation::Vertical, 16);
+            let responses = gtk::Box::new(gtk::Orientation::Vertical, 10);
             card.append(&responses);
             card.set_hexpand(true);
             let scroll = gtk::ScrolledWindow::builder()

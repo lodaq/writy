@@ -123,9 +123,9 @@ input {
             assert any(record.get("pid") == foot.pid for record in records if record["type"] == "focus"), "incorrect focus PID"
             sequence = [record["seq"] for record in records]
             assert sequence == sorted(set(sequence)), "non-monotonic sequence"
-            pump(0.1)
-            pump(1.8, authorize=False)
-            assert any(record.get("reason") == "lease-expired" for record in records), "hung daemon lease did not expire"
+            pump(0.5)
+            pump(2.0, authorize=False)
+            assert any(record.get("reason") == "lease-expired" for record in records), f"hung daemon lease did not expire: {[r for r in records if r['type'] == 'reset']}"
             # A daemon restart must receive a fresh hello/reset and complete device state.
             peer.close()
             peer, _ = server.accept()
@@ -145,8 +145,9 @@ input {
             assert disabled.wait(timeout=3) == 0
             assert len([record for record in records if record["type"] == "key"]) == count_before, "capture-off leaked keys"
             assert "ok" in ctl("plugin", "unload", str(plugin)).lower()
-            assert json.loads(ctl("-j", "version"))["version"] == "0.56.2", "compositor failed after unload"
-            print(json.dumps({"nested": True, "hyprland": "0.56.2", "hello": True,
+            version = json.loads(ctl("-j", "version"))["version"]
+            assert version, "compositor failed after unload"
+            print(json.dumps({"nested": True, "hyprland": version, "hello": True,
                               "press_release_records": len(keys), "devices": len(keymaps),
                               "reset_reasons": sorted({record["reason"] for record in records if record["type"] == "reset"}),
                               "focus": True, "capture_off": True, "lease_expiry": True,

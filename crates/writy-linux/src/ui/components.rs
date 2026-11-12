@@ -31,7 +31,7 @@ mod reading_column {
         pub header: OnceCell<gtk::Box>,
     }
     fn inset(width: i32) -> i32 {
-        (width / 18).clamp(20, 80)
+        (width / 24).clamp(12, 40)
     }
     impl ReadingColumn {
         fn arrange_actions(&self, width: i32) {
@@ -113,20 +113,20 @@ mod reading_column {
 }
 
 pub(super) fn section(title: &str, description: &str) -> (gtk::Box, gtk::Box) {
-    let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 5);
     let heading = label(title, "writy-title");
     heading.add_css_class("writy-section-title");
     section.append(&heading);
     if !description.is_empty() {
         section.append(&label(description, "writy-meta"));
     }
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 7);
     content.add_css_class("writy-card");
     section.append(&content);
     (section, content)
 }
 pub(super) fn empty_state(title: &str, detail: &str) -> gtk::Box {
-    let state = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let state = gtk::Box::new(gtk::Orientation::Vertical, 5);
     state.add_css_class("writy-empty");
     state.set_valign(gtk::Align::Center);
     state.set_vexpand(true);
@@ -211,7 +211,7 @@ pub(super) fn copy_button(text: Rc<RefCell<String>>, caption: &'static str) -> g
     button
 }
 pub(super) fn result_card(panel: &Panel) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 5);
     card.add_css_class("writy-card");
     card.add_css_class("writy-result-section");
     let header = gtk::FlowBox::new();
@@ -238,11 +238,11 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
         card.append(&label(&panel.body, "writy-status"));
     }
     for group in &panel.groups {
-        let source = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let source = gtk::Box::new(gtk::Orientation::Vertical, 2);
         source.add_css_class("writy-source-group");
         source.append(&label(&group.source, "writy-source-title"));
         for (index, row) in group.rows.iter().enumerate() {
-            let entry = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+            let entry = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             entry.add_css_class("writy-result-entry");
             let (text, markup) = panel.search_row(group, row);
             let body = label(&text, "writy-body");
@@ -267,7 +267,7 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
                 number.set_valign(gtk::Align::Start);
                 entry.append(&number);
             }
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
             content.set_hexpand(true);
             if panel.category == "definition"
                 && !row.headword.is_empty()
@@ -275,7 +275,7 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
                     || row.headword != group.rows[index - 1].headword
                     || row.part_of_speech != group.rows[index - 1].part_of_speech)
             {
-                let heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let heading = gtk::Box::new(gtk::Orientation::Horizontal, 5);
                 heading.set_direction(entry.direction());
                 let headword = label(&row.headword, "writy-entry-headword");
                 let leading = gtk::pango::AttrList::new();
