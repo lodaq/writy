@@ -27,10 +27,14 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
-    /// Run the background service and native HUDs.
+    #[command(hide = true)]
+    AccessibilityWorker,
+    /// Run the background service and Text assistant.
     Daemon,
-    /// Open the focused bilingual search/editor window.
+    /// Toggle the focused bilingual search/editor window.
     Search,
+    /// Select a screen area and extract its text locally into a fresh search.
+    Screenshot,
     /// Alias for search.
     Translate,
     /// Look up text or the current PRIMARY selection.
@@ -42,9 +46,13 @@ enum Action {
         #[arg(long)]
         json: bool,
     },
+    /// Apply the first current suggestion to verified source text.
     Accept,
+    /// Copy the first suggestion or result.
     Copy,
+    /// Pause or resume automatic assistance; manual tools remain available.
     Pause,
+    /// Allow assistance in this terminal until focus changes.
     Prose,
     Dismiss,
     Status,
@@ -70,6 +78,8 @@ enum Action {
     Doctor,
     #[command(hide = true)]
     SelectionEvent,
+    #[command(hide = true)]
+    CopyEvent,
 }
 #[derive(Subcommand)]
 enum DictAction {
@@ -110,6 +120,9 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 }
 fn run() -> Result<()> {
     let action = Cli::parse().command.unwrap_or(Action::Search);
+    if matches!(action, Action::AccessibilityWorker) {
+        return accessibility::transport::run();
+    }
     if matches!(action, Action::Daemon) {
         let config = Config::load()?;
         let rt = runtime()?;
@@ -150,7 +163,15 @@ fn run() -> Result<()> {
         return Ok(());
     }
     if matches!(action, Action::Doctor) {
-        for program in ["hyprctl", "wl-paste", "mpv", "ollama"] {
+        for program in [
+            "hyprctl",
+            "wl-paste",
+            "mpv",
+            "ollama",
+            "grim",
+            "slurp",
+            "tesseract",
+        ] {
             let found = std::env::var_os("PATH").is_some_and(|path| {
                 std::env::split_paths(&path).any(|p| p.join(program).is_file())
             });
@@ -179,6 +200,7 @@ fn run() -> Result<()> {
             });
             Command::Search { text }
         }
+        Action::Screenshot => Command::Capture,
         Action::Settings => Command::Settings,
         Action::Accept => Command::Accept,
         Action::Copy => Command::Copy,
@@ -208,7 +230,11 @@ fn run() -> Result<()> {
             }
             Command::Lookup { text }
         }
-        Action::SelectionEvent => {
+        Action::SelectionEvent | Action::CopyEvent => {
+            let copied = matches!(action, Action::CopyEvent);
+            if copied && rt.block_on(writy_clipboard()).unwrap_or(true) {
+                return Ok(());
+            }
             let state = std::env::var("CLIPBOARD_STATE").unwrap_or_default();
             let text = if matches!(state.as_str(), "nil" | "clear" | "sensitive") {
                 None
@@ -216,7 +242,11 @@ fn run() -> Result<()> {
                 let s = read_stdin()?;
                 if s.trim().is_empty() { None } else { Some(s) }
             };
-            Command::Selection { text }
+            if copied {
+                Command::Clipboard { text }
+            } else {
+                Command::Selection { text }
+            }
         }
         _ => unreachable!(),
     };
@@ -226,7 +256,10 @@ fn run() -> Result<()> {
         Err(_)
             if matches!(
                 command,
-                Command::Search { .. } | Command::Settings | Command::Lookup { .. }
+                Command::Search { .. }
+                    | Command::Capture
+                    | Command::Settings
+                    | Command::Lookup { .. }
             ) =>
         {
             std::process::Command::new(std::env::current_exe()?)
@@ -330,6 +363,34 @@ async fn dictionary_action(action: DictAction) -> Result<()> {
     }
     let _ = ipc::send(&Command::Reload).await;
     Ok(())
+}
+
+async fn writy_clipboard() -> Result<bool> {
+    use tokio::io::AsyncReadExt;
+    let mut child = tokio::process::Command::new("wl-paste")
+        .arg("--list-types")
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .context("Clipboard types unavailable")?
+        .take(8193);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).await?;
+        ensure!(
+            bytes.len() <= 8192 && child.wait().await?.success(),
+            "Clipboard types unavailable"
+        );
+        Ok(String::from_utf8(bytes)?
+            .lines()
+            .any(|mime| mime == "application/x-writy-result"))
+    })
+    .await?
 }
 
 async fn clipboard_text(primary: bool) -> Result<String> {

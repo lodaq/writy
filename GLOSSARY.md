@@ -1,17 +1,45 @@
 # Writy glossary
 
+**Text assistant**: Help with selected, copied, or newly typed text through
+translation, dictionary information, and writing suggestions.
+
+**Show on selection**: The option to open the Text assistant automatically when
+text is selected.
+
+**Show on copy**: The option to open the Text assistant automatically when text
+is copied.
+
+**Show while typing**: The option to open the Text assistant automatically while
+composing text. Turning it off stops automatic typing analysis and its popup.
+
+**Pause automatic assistance**: Temporarily stop automatic selection, copy,
+and typing assistance while preserving their saved preferences.
+Manual tools remain available; Resume automatic assistance restores the enabled
+automatic behaviors.
+
 **Reading assistance**: Help understanding selected or manually entered English
 or Arabic text through dictionary entries and translation.
 
 **Writing assistance**: English spelling, grammar, and phrasing suggestions
-while composing prose. Arabic writing correction is a future capability.
+while composing prose, plus model-generated improvements in English or Arabic.
+
+**Suggestions**: The Text assistant section containing corrections, synonyms,
+and alternative wording for words or phrases.
+_Avoid_: Improve as a section name.
+
+**Apply**: Accept a suggestion by changing the source text.
+
+**Copy**: Place result text on the clipboard.
+
+**Dismiss**: Hide a suggestion until the text changes or the user leaves the field.
 
 **Search mode**: Explicit lookup from Writy's focused search window.
 
-**Select mode**: Reading assistance for the current primary selection.
+**Select mode**: Legacy internal name for assistance triggered by selecting text.
+Use Show on selection in the interface.
 
-**Insert mode**: Ambient assistance for newly typed English prose, while the
-current application and field are eligible.
+**Insert mode**: Legacy internal name for assistance while composing prose.
+Use Show while typing for its automatic trigger in the interface.
 
 **HUD**: A compact result surface dedicated to a linguistic category, such as
 translation, definitions, or writing suggestions. A HUD normally leaves keyboard
@@ -27,7 +55,14 @@ translations and examples.
 **Suggestion**: A proposed correction or alternative phrasing. It only changes
 application text after the user accepts it.
 
-**Completion**: A proposed continuation of an unfinished word or phrase.
+**Correction**: A proposed fix for a spelling or grammar issue.
+
+**Suggested wording**: An optional alternative phrasing, distinct from a claim
+that the original text contains an error.
+
+**Rewrite**: Alternative wording proposed for existing text.
+
+**Suggestion menu**: A popup containing proposed changes for one marked issue.
 
 **Word family**: Words linked by derivation, such as *decide*, *decision*, and
 *decisive*. Inflections such as *decided* are grammatical forms of a word and
@@ -35,12 +70,15 @@ should be distinguished from derivations.
 
 **Collocation**: Words frequently used together, such as *make a decision* or
 *قرار حاسم*.
+The user-facing section is named Common word combinations.
 
-**Provider**: A configured source of generated translations or rewrites. A
-provider may run locally or remotely.
+**AI provider**: A configured local or remote source of model-generated help.
+Translation engines and dictionary sources retain their own names.
 
-**Prose mode**: An explicit per-session permission to offer writing assistance
-inside a terminal. It does not identify shell commands or hidden prompts.
+**Allow assistance in this terminal**: Temporary permission to offer writing
+assistance in the current terminal context. It does not identify shell commands
+or hidden prompts.
+_Avoid_: Prose mode in user-facing labels.
 
 **Opaque input**: A field whose semantic role, surrounding text, or caret cannot
 be verified. Assistance in opaque input is best effort and may be disabled.

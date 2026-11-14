@@ -38,10 +38,14 @@ impl EnglishChecker {
                     }
                     Edit::Remove => (lint.span.start, lint.span.end, String::new()),
                 };
-                let kind = if lint.lint_kind == harper_core::linting::LintKind::Spelling {
-                    SuggestionKind::Spelling
-                } else {
-                    SuggestionKind::Grammar
+                use harper_core::linting::LintKind;
+                let kind = match lint.lint_kind {
+                    LintKind::Spelling => SuggestionKind::Spelling,
+                    LintKind::Enhancement
+                    | LintKind::Style
+                    | LintKind::Redundancy
+                    | LintKind::Regionalism => SuggestionKind::Rewrite,
+                    _ => SuggestionKind::Grammar,
                 };
                 Some(Suggestion {
                     snapshot: snapshot.clone(),

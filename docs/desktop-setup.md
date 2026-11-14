@@ -29,6 +29,7 @@ Settings → Dictionary library. Cloud assistance is unconfigured. Local generat
 |---|---|
 | Alt+G | Open focused search/editor |
 | Ctrl+Alt+G | Look up the current selection |
+| Ctrl+Alt+O | Capture a screen area and extract its text (new sample binding) |
 | Ctrl+Alt+Enter | Apply the current verified suggestion |
 | Ctrl+Alt+W | Pause/resume capture |
 | Ctrl+Alt+P | Toggle terminal prose for the current focus |
@@ -53,7 +54,7 @@ historical English usage; Princeton WordNet overlaps Open English WordNet.
 Publisher and licence links remain available beside each source.
 
 Click **Download** once to download, extract, convert, and import in the
-background. The same row then shows an enabled on/off switch. Switches save immediately and affect lookups and completions;
+background. The same row then shows an enabled on/off switch. Switches save immediately and affect lookups;
 turning one off keeps its data. Installed sources show an active **Remove** button. Remove immediately deletes the
 source's entries, preference, and managed cached download. Download becomes
 available again. Progress and failures are shown without blocking the desktop.
@@ -153,3 +154,11 @@ then keyless translation when no key is set.
 After a Hyprland upgrade, rebuild the bridge and run its nested smoke test before
 loading it. With no bridge loaded, `writy status` reports bridge_connected=false;
 automatic typing and selection cannot identify the focused app and remain inactive.
+
+### Image-input update
+
+Rebuild and restart the daemon to load image support. Add the new sample
+`Ctrl+Alt+O` binding (`writy screenshot`) to your Hyprland configuration if desired;
+repository changes do not rewrite your live bindings. Install `slurp` alongside
+`grim`, `tesseract`, `tesseract-data-eng`, and `tesseract-data-ara`. Paste images
+with Ctrl+V in the search editor. See the [image-input workflow](../README.md#screenshot-and-image-input).

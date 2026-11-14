@@ -23,7 +23,7 @@ use writy_core::{
     config::Config,
     dictionary::Dictionary,
     linter::EnglishChecker,
-    provider::{ModelService, WritingAssistance, writing_word},
+    provider::{ImprovementFeedback, ModelService, WritingAssistance, writing_word},
     types::{
         Attribution, Capability, Confidence, LexicalEntry, ProviderResult, Sense, Suggestion,
         SuggestionKind, TextSnapshot,
@@ -35,7 +35,7 @@ enum Event {
     Connected(u64, mpsc::Sender<serde_json::Value>),
     Disconnected(u64),
     Bridge(u64, BridgeEvent),
-    Model(u64, Result<ProviderResult>),
+    Model(u64, Capability, Result<ProviderResult>),
     Checked(TextSnapshot, Vec<Suggestion>),
     CheckerReady,
     Observation {
@@ -69,6 +69,7 @@ struct Generation {
     current: Option<TextSnapshot>,
     anchor: Option<(u64, FieldSnapshot)>,
     suggestions: Vec<Suggestion>,
+    dismissed: Vec<Suggestion>,
     entries: Vec<LexicalEntry>,
     translation: Option<(String, String)>,
     notice: String,
@@ -76,6 +77,7 @@ struct Generation {
     local_revision: u64,
     model_revision: u64,
     selection_position: Option<(i32, i32)>,
+    query_context: u64,
 }
 impl Generation {
     fn new(clock: Arc<AtomicU64>) -> Self {
@@ -85,6 +87,47 @@ impl Generation {
             model_revision: u64::MAX,
             ..Self::default()
         }
+    }
+    fn add_synonyms(&mut self) {
+        let Some(snapshot) = &self.current else {
+            return;
+        };
+        if snapshot.text.split_whitespace().count() != 1 {
+            return;
+        }
+        for (word, source) in self
+            .entries
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .senses
+                    .iter()
+                    .flat_map(|sense| &sense.synonyms)
+                    .map(move |word| (word, &entry.source.name))
+            })
+            .take(8)
+        {
+            if word == &snapshot.text || self.suggestions.iter().any(|s| s.replacement == *word) {
+                continue;
+            }
+            self.suggestions.push(Suggestion {
+                snapshot: snapshot.clone(),
+                start: 0,
+                end: snapshot.text.chars().count(),
+                replacement: word.clone(),
+                description: "Synonym; choose one that fits your meaning".into(),
+                kind: SuggestionKind::Rewrite,
+                provider: source.to_string(),
+            });
+        }
+    }
+    fn is_dismissed(&self, suggestion: &Suggestion) -> bool {
+        self.dismissed.iter().any(|hidden| {
+            hidden.snapshot.text == suggestion.snapshot.text
+                && hidden.start == suggestion.start
+                && hidden.end == suggestion.end
+                && hidden.replacement == suggestion.replacement
+        })
     }
     fn id(&self) -> u64 {
         self.clock.load(Ordering::SeqCst)
@@ -123,6 +166,7 @@ impl Generation {
         self.advance(preserve_huds)
     }
     fn type_text(&mut self, text: &str) -> UiEvent {
+        self.dismissed.clear();
         self.clear_results();
         self.buffer.push(text);
         self.current = Some(self.buffer.snapshot());
@@ -133,6 +177,9 @@ impl Generation {
 
 struct State {
     config: Config,
+    paused: bool,
+    field_context: Option<(String, String)>,
+    context_version: u64,
     ui: SyncSender<UiEvent>,
     generation: Generation,
     dictionary: Dictionary,
@@ -181,13 +228,14 @@ impl State {
     fn allowed(&self) -> bool {
         self.config
             .capture_allowed(&self.app, self.prose, self.secure)
+            && !self.paused
             && !self.search
             && !screenshot_app(&self.app)
             && !self.locked
     }
     fn capture_lease(&self) {
         if let Some(tx) = &self.bridge {
-            let _=tx.try_send(serde_json::json!({"type":"capture","enabled":self.allowed(),"focus_epoch":self.epoch}));
+            let _=tx.try_send(serde_json::json!({"type":"capture","enabled":self.allowed() && self.config.typing_popup,"focus_epoch":self.epoch}));
         }
     }
     fn publish(&self) {
@@ -210,7 +258,13 @@ impl State {
             generation: self.generation.id(),
             snapshot,
             entries: self.generation.entries.clone(),
-            suggestions: self.generation.suggestions.clone(),
+            suggestions: self
+                .generation
+                .suggestions
+                .iter()
+                .filter(|suggestion| !self.generation.is_dismissed(suggestion))
+                .cloned()
+                .collect(),
             translation: self.generation.translation.clone(),
             status: self.generation.notice.clone(),
             caret,
@@ -240,6 +294,15 @@ impl State {
     }
     fn observation(&mut self, observation: Observation, revision: Option<u64>) {
         self.access_status = observation.status.clone();
+        let context = observation
+            .field
+            .as_ref()
+            .map(|field| (field.identity.clone(), field.text.clone()));
+        if context != self.field_context {
+            self.field_context = context;
+            self.context_version += 1;
+            self.generation.dismissed.clear();
+        }
         if observation.secure {
             self.secure = true;
             self.clear();
@@ -287,8 +350,15 @@ impl State {
         let generation = self.generation.id();
         let tx = tx.clone();
         self.generation.model = Some(tokio::spawn(async move {
-            let result = service.generate(snapshot, capability).await;
-            let _ = tx.send(Event::Model(generation, result)).await;
+            let improve = capability == Capability::Translate && snapshot.source == "search";
+            let result = service.generate(snapshot.clone(), capability).await;
+            let _ = tx.send(Event::Model(generation, capability, result)).await;
+            if improve {
+                let result = service.generate(snapshot, Capability::Improve).await;
+                let _ = tx
+                    .send(Event::Model(generation, Capability::Improve, result))
+                    .await;
+            }
         }));
         self.generation.notice = "Generating…".into();
         self.publish();
@@ -305,8 +375,17 @@ impl State {
             self.clear();
             return;
         }
+        if self
+            .generation
+            .current
+            .as_ref()
+            .is_none_or(|current| current.text != text)
+        {
+            self.generation.dismissed.clear();
+        }
         self.clear_with_huds(true);
         self.selection = selection;
+        self.generation.query_context = self.context_version;
         self.generation.selection_position = if selection {
             cursor_position().await
         } else {
@@ -323,6 +402,7 @@ impl State {
         };
         self.generation.entries = self.dictionary.lookup(&snapshot.text).unwrap_or_default();
         self.generation.current = Some(snapshot.clone());
+        self.generation.add_synonyms();
         if !translate && !selection {
             self.checker.send_replace(Some(snapshot.clone()));
         }
@@ -332,19 +412,16 @@ impl State {
             String::new()
         };
         if translate
-            || snapshot.text.split_whitespace().count() > 1
-            || self.generation.entries.is_empty()
+            || self.generation.entries.iter().all(|entry| {
+                entry
+                    .senses
+                    .iter()
+                    .all(|sense| sense.translations.is_empty())
+            })
         {
-            self.request(
-                if translate || selection {
-                    Capability::Translate
-                } else {
-                    Capability::Rewrite
-                },
-                tx,
-            );
+            self.request(Capability::Translate, tx);
         } else {
-            self.publish();
+            self.request(Capability::Improve, tx);
         }
     }
     async fn command(&mut self, cmd: Command, tx: &mpsc::Sender<Event>) -> String {
@@ -354,28 +431,51 @@ impl State {
             let _ = self.ui.try_send(UiEvent::Notice(message.clone()));
             return message;
         }
+        let cmd = if matches!(cmd, Command::Search { .. }) && self.search {
+            Command::Dismiss
+        } else {
+            cmd
+        };
+        let clipboard_event = matches!(cmd, Command::Clipboard { .. });
         match cmd {
             Command::HudInteraction { active } => { self.hud_interacting = active; },
-            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"offline":self.config.offline,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
+            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"paused":self.paused,"typing_popup":self.config.typing_popup,"selection_popup":self.config.selection_popup,"copy_popup":self.config.copy_popup,"offline":self.config.offline,"search_active":self.search,"hud_interacting":self.hud_interacting,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.config.typing_popup&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
             Command::Search{text}=>{let query=text.or_else(||self.generation.current.as_ref().map(|s|s.text.clone()));self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
+            Command::Capture=>{let _=self.ui.try_send(UiEvent::Capture);}
             Command::Settings=>{let _=self.ui.try_send(UiEvent::Settings);}
             Command::Lookup{text}=>{self.search=false;self.query(text,true,true,tx).await;}
-            Command::Query{text,translate}=>{self.search=true;self.query(text,translate,false,tx).await;}
-            Command::Selection{text}=>{
-                if self.hud_interacting||!self.config.selection_popup||screenshot_app(&self.app)||!self.config.capture_allowed(&self.app,true,self.secure){return "ignored".into();}
-                if let Some(text)=text {if !self.search {self.query(text,true,true,tx).await;}}else if self.selection {self.clear();self.selection=false;}
+            Command::Query{text,translate}=>{self.search=true;self.capture_lease();self.query(text,translate,false,tx).await;}
+            Command::Selection{text} | Command::Clipboard{text}=>{
+                let enabled = if clipboard_event { self.config.copy_popup } else { self.config.selection_popup };
+                if !enabled || self.paused || self.locked || self.search || self.hud_interacting || screenshot_app(&self.app) || !self.config.capture_allowed(&self.app,true,self.secure) { return "ignored".into(); }
+                if let Some(text)=text {
+                    let unchanged = self.selection && self.generation.query_context == self.context_version && self.generation.current.as_ref().is_some_and(|current| current.text == text.trim());
+                    if !unchanged { self.query(text,true,true,tx).await; }
+                } else if self.selection {self.clear();self.selection=false;}
             }
             Command::Dismiss=>{self.clear();self.search=false;self.selection=false;self.capture_lease();let _=self.ui.try_send(UiEvent::Dismiss);}
-            Command::Pause=>{self.config.enabled= !self.config.enabled;self.clear();self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.config.enabled{"Writy resumed"}else{"Writy paused"}.into()));}
-            Command::Prose=>{self.prose= !self.prose;self.clear();self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.prose{"Terminal prose mode enabled until focus changes"}else{"Terminal prose mode disabled"}.into()));}
+            Command::Pause=>{self.paused= !self.paused;let _=self.ui.try_send(UiEvent::Paused(self.paused));if !self.search {self.clear();}self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.paused{"Automatic assistance paused"}else{"Automatic assistance resumed"}.into()));}
+            Command::Prose=>{self.prose= !self.prose;self.clear();self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.prose{"Assistance allowed in this terminal until focus changes"}else{"Assistance disabled in this terminal"}.into()));}
             Command::Offline{enabled}=>{self.config.offline=enabled;self.clear();}
             Command::Reload=>match Config::load(){Ok(c)=>{self.config=c;self.clear();self.capture_lease();},Err(_)=>return "invalid configuration".into()},
+            Command::DismissSuggestion { generation, suggestion } => {
+                if generation > self.generation.id() || self.generation.current.as_ref().is_some_and(|current| current.text != suggestion.snapshot.text) { return "Suggestion is stale".into(); }
+                self.generation.dismissed.push(suggestion);
+                self.publish();
+            }
             Command::Copy=>{
-                let text=self.generation.suggestions.first().and_then(Suggestion::replaced_text).or_else(||self.generation.translation.as_ref().map(|t|t.0.clone())).or_else(||self.generation.entries.iter().flat_map(|e|&e.senses).flat_map(|s|&s.translations).next().cloned());
+                let text=self.generation.suggestions.iter().find(|s| !self.generation.is_dismissed(s)).and_then(Suggestion::replaced_text).or_else(||self.generation.translation.as_ref().map(|t|t.0.clone())).or_else(||self.generation.entries.iter().flat_map(|e|&e.senses).flat_map(|s|&s.translations).next().cloned());
                 if let Some(text)=text {let _=self.ui.try_send(UiEvent::Copy(text));}
             }
-            Command::Accept=>{
-                let Some(s)=self.generation.suggestions.first().cloned()else{return "no suggestion".into();};
+            Command::Accept | Command::Apply { .. }=>{
+                let choice = match cmd {
+                    Command::Apply { generation, suggestion } => {
+                        if generation != self.generation.id() { return "Suggestion is stale".into(); }
+                        self.generation.suggestions.iter().find(|offered| offered.same_edit(&suggestion) && !self.generation.is_dismissed(offered))
+                    },
+                    _ => self.generation.suggestions.iter().find(|s| !self.generation.is_dismissed(s)),
+                };
+                let Some(s)=choice.cloned()else{return "no suggestion".into();};
                 let Some(current)=&self.generation.current else{return "no current context".into();};
                 if !s.matches(current)||current.confidence!=Confidence::Verified {return "Text range is unverified; use Copy".into();}
                 let Some((revision,field))=self.generation.anchor.clone()else{return "Text range is unverified; use Copy".into();};
@@ -433,6 +533,9 @@ impl State {
                     self.selection = false;
                 }
                 if self.window != window_id {
+                    self.context_version += 1;
+                    self.field_context = None;
+                    self.generation.dismissed.clear();
                     self.secure = false;
                 }
                 self.app = app_id;
@@ -476,10 +579,15 @@ impl State {
                 ..
             } => {
                 self.epoch = focus_epoch;
-                self.invalidate_capture(matches!(
-                    reason.as_str(),
-                    "focus" | "window" | "shortcut" | "navigation"
-                ));
+                if reason == "shortcut" && self.selection {
+                    // Copy shortcuts keep read-only selection analysis, never edit authority.
+                    self.generation.discard_capture();
+                } else {
+                    self.invalidate_capture(matches!(
+                        reason.as_str(),
+                        "focus" | "window" | "shortcut" | "navigation" | "geometry"
+                    ));
+                }
                 self.inspect(tx);
                 self.capture_lease();
             }
@@ -490,7 +598,7 @@ impl State {
                 focus_epoch,
                 ..
             } => {
-                if focus_epoch != self.epoch || !self.allowed() {
+                if focus_epoch != self.epoch || !self.allowed() || !self.config.typing_popup {
                     return;
                 }
                 match self.generation.decoder.key(&device, keycode, state) {
@@ -557,6 +665,52 @@ fn generated_lexical_entry(
     }
 }
 
+fn update_watcher(
+    child: &mut Option<tokio::process::Child>,
+    watching: &mut bool,
+    enabled: bool,
+    primary: bool,
+    ui: &SyncSender<UiEvent>,
+) {
+    if *watching == enabled {
+        return;
+    }
+    *watching = enabled;
+    if let Some(mut child) = child.take() {
+        let _ = child.start_kill();
+    }
+    if !enabled {
+        return;
+    }
+    let result = (|| -> Result<tokio::process::Child> {
+        let mut command = tokio::process::Command::new("wl-paste");
+        if primary {
+            command.arg("--primary");
+        }
+        Ok(command
+            .args(["--type", "text", "--watch"])
+            .arg(std::env::current_exe()?)
+            .arg(if primary {
+                "selection-event"
+            } else {
+                "copy-event"
+            })
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?)
+    })();
+    match result {
+        Ok(process) => *child = Some(process),
+        Err(_) => {
+            let _ = ui.try_send(UiEvent::Notice(
+                "Automatic clipboard watching unavailable; install wl-clipboard".into(),
+            ));
+        }
+    }
+}
+
 async fn run(
     config: Config,
     ui: SyncSender<UiEvent>,
@@ -572,23 +726,16 @@ async fn run(
     let (remote_tx, mut remote_rx) = mpsc::channel(64);
     tokio::spawn(control_server(control, remote_tx));
     tokio::spawn(bridge_server(bridge, events.clone()));
-    let mut watcher = if config.selection_popup {
-        tokio::process::Command::new("wl-paste")
-            .args(["--primary", "--watch"])
-            .arg(std::env::current_exe()?)
-            .arg("selection-event")
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()
-    } else {
-        None
-    };
+    let mut selection_watcher = None;
+    let mut copy_watcher = None;
+    let mut watching_selection = false;
+    let mut watching_copy = false;
     let dictionary = ipc::open_dictionary()?;
     let mut s = State {
         config,
+        paused: false,
+        field_context: None,
+        context_version: 0,
         ui,
         generation: Generation::new(generation),
         dictionary,
@@ -617,6 +764,20 @@ async fn run(
     let mut tick = tokio::time::interval(Duration::from_millis(25));
     let mut heartbeat = tokio::time::interval(Duration::from_millis(400));
     loop {
+        update_watcher(
+            &mut selection_watcher,
+            &mut watching_selection,
+            s.config.selection_popup && s.config.enabled && !s.paused,
+            true,
+            &s.ui,
+        );
+        update_watcher(
+            &mut copy_watcher,
+            &mut watching_copy,
+            s.config.copy_popup && s.config.enabled && !s.paused,
+            false,
+            &s.ui,
+        );
         tokio::select! {
             command=commands.recv()=>{let Some((cmd,reply))=command else {break;};let result=s.command(cmd,&events).await;if let Some(reply)=reply{let _=reply.send(result.clone());}
                 if result!="ok"&&result!="applied"&&result!="ignored"{let _=s.ui.try_send(UiEvent::Notice(result));}}
@@ -629,15 +790,15 @@ async fn run(
                 Event::CheckerReady=>{s.checker_ready=true;}
                 Event::Checked(snapshot, suggestions)=>{
                     if s.generation.current.as_ref().is_some_and(|c|c.same_context(&snapshot)) {
-                        s.generation.suggestions.retain(|s|matches!(s.kind,SuggestionKind::Rewrite|SuggestionKind::Completion));
+                        s.generation.suggestions.retain(|s|s.provider != "Harper · local" && s.kind==SuggestionKind::Rewrite);
                         s.generation.suggestions.extend(suggestions);s.publish();
                     }
                 }
-                Event::Model(g,result)=>{
+                Event::Model(g,capability,result)=>{
                     if g!=s.generation.id(){continue;}
                     match result {
                         Ok(result)=>if s.generation.current.as_ref().is_some_and(|c|c.same_context(&result.snapshot)) {
-                            s.generation.notice=result.notice.unwrap_or_default();
+                            if result.capability != Capability::Improve || s.generation.notice == "Generating…" {s.generation.notice=result.notice.unwrap_or_default();}
                             match result.capability {
                                 Capability::WritingAssistance=>match WritingAssistance::parse(&result.text) {
                                     Ok(assistance)=>{
@@ -645,30 +806,35 @@ async fn run(
                                         let entry=generated_lexical_entry(&snapshot,&s.generation.entries,&assistance,&result.provider);
                                         s.generation.entries.push(entry);
                                         s.generation.translation=Some((assistance.translation,result.provider.clone()));
-                                        if snapshot.text.split_whitespace().count()>=s.config.typing.min_rephrase_words { s.request(Capability::Rewrite,&events); }
+                                        s.generation.add_synonyms(); if snapshot.text.split_whitespace().count() >= s.config.typing.min_rephrase_words && s.config.huds.get("suggestions").copied().unwrap_or(true) {s.request(Capability::Improve,&events);}
                                     }
                                     Err(error)=>s.generation.notice=error.to_string(),
                                 },
-                                Capability::Translate=>s.generation.translation=Some((result.text,result.provider)),
+                                Capability::Translate=>{s.generation.translation=Some((result.text,result.provider)); if s.search {s.generation.notice="Generating…".into();} },
+                                Capability::Improve=>match ImprovementFeedback::parse(&result.snapshot.text, &result.text) {
+                                    Ok(feedback)=>for suggestion in feedback.into_suggestions(&result.snapshot, &result.provider) {
+                                        if !s.generation.suggestions.iter().any(|old|old.same_edit(&suggestion)) {s.generation.suggestions.push(suggestion);}
+                                    },
+                                    Err(error)=>s.generation.notice=error.to_string(),
+                                },
                                 Capability::Rewrite=>{
                                     let end=result.snapshot.text.chars().count();
                                     s.generation.suggestions.insert(0,Suggestion{snapshot:s.generation.current.clone().unwrap_or(result.snapshot),start:0,end,replacement:result.text,description:"Natural phrasing".into(),kind:SuggestionKind::Rewrite,provider:result.provider});
                                 }
                             } s.publish();
                         },
-                        Err(e)=>{s.generation.notice=e.to_string();s.publish();}
+                        Err(e)=>{let name=match capability {Capability::WritingAssistance=>"Writing assistance",Capability::Improve=>"Suggestions",Capability::Rewrite=>"Rewrite",Capability::Translate=>"Translation"};s.generation.notice=format!("{name}: {e}");s.publish();}
                     }
                 }
             },
-            _=heartbeat.tick()=>{s.inspect(&events);s.capture_lease();if let Some(w)=watcher.as_mut()&& w.try_wait().ok().flatten().is_some(){watcher=None;let _=s.ui.try_send(UiEvent::Notice("Automatic selection watching is unavailable; use the selection shortcut".into()));}}
+            _=heartbeat.tick()=>{
+                s.inspect(&events);s.capture_lease();for (watcher, name) in [(&mut selection_watcher, "selection"), (&mut copy_watcher, "copy")] {if let Some(w)=watcher.as_mut() && w.try_wait().ok().flatten().is_some(){*watcher=None;let _=s.ui.try_send(UiEvent::Notice(format!("Automatic {name} watching is unavailable; use manual lookup or toggle the setting to retry")));}}}
             _=tick.tick()=>{
-                if s.search||s.selection||!s.allowed(){continue;}
+                if s.search||s.selection||!s.allowed()||!s.config.typing_popup{continue;}
                 let Some(current)=s.generation.current.clone()else{continue;};if current.text.trim().is_empty(){continue;}
                 if s.generation.local_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(60){
-                    s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.checker.send_replace(Some(current.clone()));
-                    let prefix=current.text.split_whitespace().last().unwrap_or("");
-                    if prefix.chars().count()>=2&&!current.text.ends_with(char::is_whitespace)
-                        && let Ok(words)=s.dictionary.complete(prefix,3){for word in words {if word!=prefix{s.generation.suggestions.push(Suggestion{snapshot:current.clone(),start:current.text.chars().count()-prefix.chars().count(),end:current.text.chars().count(),replacement:word,description:"Word completion".into(),kind:SuggestionKind::Completion,provider:"Local dictionary".into()});}}} s.publish();
+                    s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.generation.add_synonyms();s.checker.send_replace(Some(current.clone()));
+                    s.publish();
                 }
                 if s.generation.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
             }
@@ -789,20 +955,8 @@ async fn bridge_server(listener: UnixListener, tx: mpsc::Sender<Event>) {
 }
 
 async fn cursor_position() -> Option<(i32, i32)> {
-    let output = tokio::time::timeout(
-        Duration::from_millis(500),
-        tokio::process::Command::new("hyprctl")
-            .args(["-j", "cursorpos"])
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let position: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let output = ipc::compositor_query("j/cursorpos").await.ok()?;
+    let position: serde_json::Value = serde_json::from_slice(&output).ok()?;
     let x = position.get("x")?.as_f64()?;
     let y = position.get("y")?.as_f64()?;
     if !x.is_finite() || !y.is_finite() {
@@ -818,12 +972,12 @@ fn sentence_ready(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ui::DisplayGeneration;
-    #[tokio::test]
-    async fn clicking_search_does_not_clear_results_or_cancel_generation() {
-        let (ui, _ui_events) = std::sync::mpsc::sync_channel(32);
-        let generation = Arc::new(AtomicU64::new(7));
-        let mut state = State {
+    fn test_state(ui: SyncSender<UiEvent>, generation: Arc<AtomicU64>) -> State {
+        State {
             config: Config::default(),
+            paused: false,
+            field_context: None,
+            context_version: 0,
             ui,
             generation: Generation::new(generation.clone()),
             dictionary: Dictionary::open(":memory:").unwrap(),
@@ -848,7 +1002,185 @@ mod tests {
             bridge_session: 0,
             output: None,
             output_bounds: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn controls_pause_and_copy_deduplication_preserve_manual_tools() {
+        let (ui, ui_events) = std::sync::mpsc::sync_channel(64);
+        let mut state = test_state(ui, Arc::new(AtomicU64::new(1)));
+        let (events, _) = mpsc::channel(32);
+        state.app = "org.example.Editor".into();
+        state.window = "editor".into();
+        state.config.typing_popup = false;
+        state.config.copy_popup = true;
+        state.config.model.ollama_url = "http://127.0.0.1:9".into();
+        assert!(
+            state.allowed(),
+            "typing off must not block other assistance"
+        );
+        let (bridge, mut controls) = mpsc::channel(4);
+        state.bridge = Some(bridge);
+        state.capture_lease();
+        assert_eq!(controls.try_recv().unwrap()["enabled"], false);
+        state
+            .command(
+                Command::Selection {
+                    text: Some("hello".into()),
+                },
+                &events,
+            )
+            .await;
+        let before = state.generation.id();
+        state
+            .bridge_event(
+                BridgeEvent::Reset {
+                    seq: 1,
+                    focus_epoch: 2,
+                    reason: "shortcut".into(),
+                },
+                &events,
+            )
+            .await;
+        state
+            .command(
+                Command::Clipboard {
+                    text: Some("hello".into()),
+                },
+                &events,
+            )
+            .await;
+        assert_eq!(
+            state.generation.id(),
+            before,
+            "select then copy reuses the request even across a shortcut reset"
+        );
+        state.context_version += 1;
+        state
+            .command(
+                Command::Clipboard {
+                    text: Some("hello".into()),
+                },
+                &events,
+            )
+            .await;
+        assert!(
+            state.generation.id() > before,
+            "a changed field must not reuse old analysis"
+        );
+        let pending = state.generation.model.as_ref().unwrap().abort_handle();
+        state.command(Command::Pause, &events).await;
+        tokio::task::yield_now().await;
+        assert!(pending.is_finished());
+        assert!(state.paused);
+        assert!(state.config.enabled && state.config.copy_popup);
+        assert!(!state.allowed());
+        assert_eq!(
+            state
+                .command(
+                    Command::Clipboard {
+                        text: Some("ignored".into())
+                    },
+                    &events
+                )
+                .await,
+            "ignored"
+        );
+        state
+            .command(
+                Command::Lookup {
+                    text: "manual".into(),
+                },
+                &events,
+            )
+            .await;
+        assert_eq!(state.generation.current.as_ref().unwrap().text, "manual");
+        state.command(Command::Pause, &events).await;
+        assert!(!state.paused);
+        assert!(state.allowed());
+        assert!(
+            ui_events
+                .try_iter()
+                .any(|event| matches!(event, UiEvent::Paused(true)))
+        );
+        state.clear();
+    }
+
+    #[tokio::test]
+    async fn dismissal_survives_read_only_hud_reset_and_repeated_results() {
+        let (ui, events) = std::sync::mpsc::sync_channel(32);
+        let mut state = test_state(ui, Arc::new(AtomicU64::new(1)));
+        state.generation = with_results();
+        let suggestion = state.generation.suggestions[0].clone();
+        let shown = state.generation.id();
+        state.hud_interacting = true;
+        state.invalidate_capture(true);
+        let (tx, _) = mpsc::channel(32);
+        assert_eq!(
+            state
+                .command(
+                    Command::DismissSuggestion {
+                        generation: shown,
+                        suggestion: suggestion.clone()
+                    },
+                    &tx
+                )
+                .await,
+            "ok"
+        );
+        let mut repeated = suggestion.clone();
+        repeated.snapshot.revision += 1;
+        state.generation.current = Some(repeated.snapshot.clone());
+        state.generation.suggestions = vec![repeated.clone()];
+        state.publish();
+        assert!(events.try_iter().any(
+            |event| matches!(event, UiEvent::Results(result) if result.suggestions.is_empty())
+        ));
+        assert_eq!(state.command(Command::Accept, &tx).await, "no suggestion");
+        state.generation.type_text("changed");
+        assert!(!state.generation.is_dismissed(&repeated));
+    }
+
+    #[test]
+    fn dictionary_synonyms_are_distinct_word_choices_with_their_source() {
+        let mut buffer = TypingBuffer::default();
+        buffer.push("good");
+        let mut generation = Generation {
+            current: Some(buffer.snapshot()),
+            entries: vec![LexicalEntry {
+                source: Attribution {
+                    name: "Fixture dictionary".into(),
+                    ..Default::default()
+                },
+                senses: vec![Sense {
+                    synonyms: vec!["good".into(), "fine".into(), "fine".into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Generation::default()
         };
+        generation.add_synonyms();
+        generation.add_synonyms();
+        assert_eq!(generation.suggestions.len(), 1);
+        assert_eq!(
+            generation.suggestions[0].replaced_text().as_deref(),
+            Some("fine")
+        );
+        assert_eq!(generation.suggestions[0].provider, "Fixture dictionary");
+        generation.suggestions.clear();
+        generation.current.as_mut().unwrap().text = "a good plan".into();
+        generation.add_synonyms();
+        assert!(
+            generation.suggestions.is_empty(),
+            "word synonyms must not replace whole phrases"
+        );
+    }
+    #[tokio::test]
+    async fn clicking_search_does_not_clear_results_or_cancel_generation() {
+        let (ui, _ui_events) = std::sync::mpsc::sync_channel(32);
+        let generation = Arc::new(AtomicU64::new(7));
+        let mut state = test_state(ui, generation.clone());
         state.search = true;
         let mut buffer = TypingBuffer::default();
         buffer.push("change");
@@ -896,41 +1228,80 @@ mod tests {
             state.generation.current.as_ref().map(|s| s.text.as_str()),
             Some("change")
         );
+        assert_eq!(
+            state
+                .command(
+                    Command::Apply {
+                        generation: 999,
+                        suggestion: Suggestion {
+                            snapshot: state.generation.current.clone().unwrap(),
+                            start: 0,
+                            end: 6,
+                            replacement: "edit".into(),
+                            description: String::new(),
+                            kind: SuggestionKind::Rewrite,
+                            provider: "fixture".into()
+                        }
+                    },
+                    &events
+                )
+                .await,
+            "Suggestion is stale"
+        );
+        _ui_events.try_iter().for_each(drop);
+        state.command(Command::Capture, &events).await;
+        assert!(
+            state.search,
+            "capture must not toggle an open search closed"
+        );
+        assert_eq!(state.generation.current.as_ref().unwrap().text, "change");
+        assert!(matches!(
+            _ui_events.try_iter().last(),
+            Some(UiEvent::Capture)
+        ));
+        state.command(Command::Search { text: None }, &events).await;
+        assert!(!state.search, "the search shortcut closes an open window");
+        assert!(
+            state.config.enabled,
+            "closing search does not pause assistance"
+        );
+        assert!(matches!(
+            _ui_events.try_iter().last(),
+            Some(UiEvent::Dismiss)
+        ));
+        state.command(Command::Search { text: None }, &events).await;
+        assert!(state.search, "the next shortcut opens search again");
+        assert!(matches!(
+            _ui_events.try_iter().last(),
+            Some(UiEvent::Search(None))
+        ));
         state.clear();
         assert!(state.generation.current.is_none());
         assert!(state.generation.translation.is_none());
+        state.search = false;
+        let (bridge, mut controls) = mpsc::channel(4);
+        state.bridge = Some(bridge);
+        state
+            .command(
+                Command::Query {
+                    text: String::new(),
+                    translate: false,
+                },
+                &events,
+            )
+            .await;
+        assert!(state.search);
+        assert_eq!(
+            controls.try_recv().unwrap()["enabled"],
+            false,
+            "opening screenshot input must disable ambient keyboard capture"
+        );
     }
     #[tokio::test]
     async fn selecting_hud_text_preserves_panels_and_ignores_self_lookup() {
         let (ui, _ui_events) = std::sync::mpsc::sync_channel(32);
         let generation = Arc::new(AtomicU64::new(7));
-        let mut state = State {
-            config: Config::default(),
-            ui,
-            generation: Generation::new(generation.clone()),
-            dictionary: Dictionary::open(":memory:").unwrap(),
-            checker: tokio::sync::watch::channel(None).0,
-            access: Accessibility::start(),
-            app: String::new(),
-            window: String::new(),
-            pid: 0,
-            epoch: 0,
-            seq: 0,
-            prose: false,
-            secure: false,
-            locked: false,
-            bridge: None,
-            last_change: Instant::now(),
-            search: false,
-            hud_interacting: false,
-            selection: false,
-            inspecting: false,
-            access_status: String::new(),
-            checker_ready: false,
-            bridge_session: 0,
-            output: None,
-            output_bounds: None,
-        };
+        let mut state = test_state(ui, generation.clone());
         let (events, _rx) = mpsc::channel(32);
         state
             .command(Command::HudInteraction { active: true }, &events)

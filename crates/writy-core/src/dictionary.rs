@@ -148,17 +148,6 @@ impl Dictionary {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
-    pub fn complete(&self, prefix: &str, limit: usize) -> Result<Vec<String>> {
-        let prefix = normalize(prefix);
-        if prefix.is_empty() || prefix.len() > 4096 || limit == 0 {
-            return Ok(Vec::new());
-        }
-        let end = format!("{prefix}\u{10ffff}");
-        let mut statement = self.connection.prepare("SELECT DISTINCT e.headword FROM lexical_aliases a JOIN lexical_entries e ON e.id=a.entry_id WHERE a.alias>=?1 AND a.alias<?2 AND NOT EXISTS (SELECT 1 FROM dictionary_preferences p WHERE p.source_key=e.source_key AND p.enabled=0) ORDER BY e.headword LIMIT ?3")?;
-        let rows = statement.query_map(params![prefix, end, limit.min(100)], |row| row.get(0))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
-    }
-
     /// Replaces this source atomically; a malformed input leaves the previous import intact.
     pub fn import_stardict(
         &mut self,

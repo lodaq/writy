@@ -190,3 +190,72 @@ The synthetic panel checks that motion events wait for the next display frame
 and that movement does not pull the panel back when its local pointer offset
 returns to zero. This verifies coordinate handling and update batching, not a
 frame-rate guarantee under every desktop workload.
+
+## Assistance controls and terminology (2026-11-12)
+
+Implemented the three independent saved triggers, temporary runtime pause,
+clipboard ownership and selection/copy deduplication, six settings groups,
+approved terminology, and per-suggestion Dismiss.
+Panel titles and tabs retain full names, using scrollable tabs instead of ellipses.
+
+Validation: workspace tests pass (50 core tests including one ignored external
+API check, 9 integration tests, and 36 Linux tests with 5 opt-in GUI tests).
+Formatting, Clippy with warnings denied, and a locked workspace build pass.
+Focused native settings, bilingual suggestion-action, and full component gallery
+tests pass in Xvfb, including narrow layout and non-ellipsized tab assertions, with
+private XDG directories, without displaying windows in the user's desktop.
+
+An earlier nested Wayland integration run passed automatic copy, self-copy
+suppression, independent controls, pause/manual lookup, verified Apply, and
+capture fail-open checks. The follow-up run adding a later identical external
+copy assertion was stopped at the user's request to avoid desktop disruption;
+that added assertion remains unverified. Model quality, complete
+cross-application trigger combinations, and layer-shell behavior after the final
+full-name layout adjustment remain unverified. No installed app, service, or
+user compositor configuration was updated.
+
+`python tests/desktop/gallery.py` now uses an isolated virtual X display rather
+than a visible nested compositor. It verifies synthetic GTK content; it does not
+validate Wayland layer-shell positioning or real application capture.
+
+
+## Startup abort with an unavailable accessibility bus — 2026-11-13
+
+The user's core dump identifies `atspi_set_main_context` calling D-Bus with a
+null connection before initialization has succeeded. The worker now calls that
+setter only after `atspi_init` returns success. A subprocess regression with
+nonexistent session/accessibility bus addresses aborted before the fix and
+passes after it. No bus preflight, dependency or implicit network fallback was
+added. The main checkout release binary used by `~/.local/bin/writy` was rebuilt.
+
+The desktop accessibility service was alive but its socket refused connections.
+Restarting `at-spi-dbus-bus.service` restored a successful D-Bus ListNames call.
+Previous private-session unit commands reused the desktop runtime directory;
+future unit runs must also provide private XDG runtime/config/data/cache paths
+and unset inherited accessibility/display addresses. A private session bus alone
+is insufficient isolation. The installed Writy service was not restarted.
+
+## Image-input validation
+
+The image-input implementation adds `writy screenshot` and search-editor image
+paste. Images remain in process memory and local Tesseract handles extraction;
+recognized text reuses the existing query/provider path. No Rust dependency was
+added. Capture uses slurp and grim, and the Arch package requires both plus
+Tesseract English/Arabic data.
+
+- `python tests/unit.py`: 89 tests passed; live-service and graphical tests remain
+  opt-in. The backend regression verifies that capture does not toggle an open
+  search closed or discard its current text before capture succeeds.
+- `python tests/desktop/image_input.py`: passed on an isolated GTK/Xvfb display
+  with real Tesseract and synthetic English/mixed English–Arabic PNGs. Exercises
+  ordinary text paste, image paste, selected-text replacement, edits while
+  loading, ordered jobs, deleted anchors, invalid/no-text images, Retry/Remove,
+  bounded process output, process failure details, timeout, canceled selection,
+  and fresh input after completed capture.
+- Release build, formatting, Clippy with warnings denied, diff whitespace checks,
+  and Arch PKGBUILD shell syntax checks passed. `writy --help` lists screenshot;
+  `writy doctor` reports the capture/OCR executable availability.
+- Capture tools in that harness are stubs. Actual interactive slurp selection,
+  Wayland clipboard delivery, and capture across real monitor layouts remain
+  unverified. slurp was not installed in the development session. Synthetic OCR
+  success does not establish accuracy on arbitrary screenshots.

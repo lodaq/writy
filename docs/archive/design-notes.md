@@ -49,8 +49,8 @@ Writy provides intelligent writing assistance, popup dictionaries, and bidirecti
 | **Select Mode** | Highlighting text across any application (`wl-paste`) | **Sentence** | **Sentence Translation:** High-fidelity bidirectional translation (AR ↔ EN) via local/cloud model. |
 | **Search Mode** | Pressing **`Alt+G`** anywhere (focused modal) | **Word** | **Full Lexical Card:** Instant live lookup for English or Arabic words with all 6 lexical categories. |
 | **Search Mode** | Pressing **`Alt+G`** anywhere (focused modal) | **Sentence** | **Sentence Translation & Rephrases:** Live translation and alternative phrasings. |
-| **Insert Mode** | Typing in any text editor / app (English) | **Word & Sentence** | **Writing Assistant:** Autocomplete, instant Harper spelling & grammar checks, model rephrases & suggestions. |
-| **Insert Mode** | Typing in any text editor / app (Arabic) | **Word & Sentence** | **Arabic Writing & Lexicon:** Word autocomplete, spelling & grammar checks, suggestions, and instant access to translation, definition, examples, collocations, synonyms/antonyms, and word families. |
+| **Insert Mode** | Typing in any text editor / app (English) | **Word & Sentence** | **Writing Assistant:** Instant Harper spelling & grammar checks, model rephrases & suggestions. |
+| **Insert Mode** | Typing in any text editor / app (Arabic) | **Word & Sentence** | **Arabic Writing & Lexicon:** Spelling & grammar checks, suggestions, and instant access to translation, definition, examples, collocations, synonyms/antonyms, and word families. |
 
 ---
 
@@ -157,7 +157,7 @@ Dictionary entries are not dumbed down to plain text:
   5. After an idle pause (200 ms), local/cloud models generate natural rephrasings.
 
 - **Arabic Typing:**
-  1. Captures the Arabic typing stream and provides word autocomplete and spellchecking (single-letter edits like Hamzas `أ/إ/آ`, Ta Marbuta `ة/ه`, and Alif Maqsura `ى/ي`).
+  1. Captures the Arabic typing stream and provides spellchecking (single-letter edits like Hamzas `أ/إ/آ`, Ta Marbuta `ة/ه`, and Alif Maqsura `ى/ي`).
   2. Offers contextual suggestions and rephrases via local/cloud models and programs.
   3. Provides instant popup access to definitions, examples, collocations, synonyms/antonyms, and word families for typed Arabic words.
 
@@ -206,7 +206,7 @@ Writy runs globally across terminal editors, native GUI tools, and browsers with
 ### Caret & Focus Detection (AT-SPI2)
 
 - Because Wayland deliberately isolates window contents and does not expose caret coordinates to unprivileged clients, Writy integrates with **AT-SPI2** (Linux Accessibility Bus).
-- **Focus & Password Safety:** Queries the focused element's accessibility role. If a field is identified as a password input or a secure terminal, autocomplete and model suggestions are completely disabled.
+- **Focus & Password Safety:** Queries the focused element's accessibility role. If a field is identified as a password input or a secure terminal, model suggestions are completely disabled.
 - **Caret Alignment:** Queries the active text caret bounding box to position the popup adjacent to your cursor.
 
 ---
@@ -222,13 +222,13 @@ Writy ships zero dictionary data by default; you have full control over the sour
 | **StarDict**         | `.ifo`, `.idx`, `.dict` / `.dict.dz`, `.syn`, `res/` | Primary bilingual & thesaurus format with local media       |
 | **OpenZIM**          | `.zim`                                               | Offline Wikipedia & full Wiktionary archives (via `zim-rs`) |
 | **Wiktionary JSONL** | Kaikki.org extracts                                  | Rich lexical data (IPA, inflection, etymology, synonyms)    |
-| **Plain Wordlists**  | TSV (`word<TAB>count`)                               | High-speed autocomplete and frequency scoring               |
+| **Plain Wordlists**  | TSV (`word<TAB>count`)                               | Word frequency scoring               |
 
 ### Required Downloads (First Launch)
 
 On first setup, Writy prompts for the three core required datasets:
 
-1. **English Word Frequency List** (autocomplete & base spellcheck).
+1. **English Word Frequency List** (base spellcheck).
 2. **English Wiktionary** (definitions, synonyms, English-to-Arabic translations).
 3. **Arabic Wiktionary** (Arabic-to-English translations and definitions).
 

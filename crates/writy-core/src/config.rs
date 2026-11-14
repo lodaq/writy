@@ -2,24 +2,26 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub enabled: bool,
     pub offline: bool,
     pub selection_popup: bool,
+    pub copy_popup: bool,
+    pub typing_popup: bool,
     pub typing: Typing,
     pub model: Models,
     pub apps: Apps,
     pub huds: BTreeMap<String, bool>,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Typing {
     pub idle_ms: u64,
     pub min_rephrase_words: usize,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Models {
     pub ollama_url: String,
@@ -65,7 +67,7 @@ impl TranslationEngine {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Apps {
     pub blocklist: Vec<String>,
@@ -123,6 +125,8 @@ impl Default for Config {
             enabled: true,
             offline: false,
             selection_popup: true,
+            copy_popup: false,
+            typing_popup: true,
             typing: Typing::default(),
             model: Models::default(),
             apps: Apps::default(),
@@ -241,6 +245,21 @@ fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_preferences_migrate_and_persist_independently() {
+        let legacy: Config = toml::from_str("selection_popup = false").unwrap();
+        assert!(legacy.typing_popup);
+        assert!(!legacy.copy_popup);
+        assert!(!legacy.selection_popup);
+        let config = Config {
+            typing_popup: false,
+            copy_popup: true,
+            ..legacy
+        };
+        let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert!(!restored.typing_popup);
+        assert!(restored.copy_popup);
+    }
     use super::*;
     #[test]
     fn terminal_and_blocked_policies() {

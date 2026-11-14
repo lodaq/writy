@@ -82,9 +82,10 @@ Rust sends capture authorization records on the same connection:
 
 Only the current epoch is accepted. Authorization expires after **1500 ms**;
 renew at least every **500 ms**. Capture defaults off. Focus, pointer-button
-presses, navigation, Ctrl/Alt/Super shortcuts, layout/keymap changes, newly
+presses, scrolling, active-window geometry changes, navigation, Ctrl/Alt/Super shortcuts, layout/keymap changes, newly
 discovered devices, locking and config reload revoke it, increment the epoch,
-and emit `reset` followed by `focus`. Keymap/modifier/focus metadata continue
+and emit `reset` followed by `focus`. Clicks and scrolling inside Writy reference
+panels are excluded so their controls keep working. Keymap/modifier/focus metadata continue
 while capture is off. Backspace resets the projected segment. A locked session always
 rejects authorization and suppresses key export.
 

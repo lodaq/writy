@@ -16,20 +16,22 @@ usefulness evaluation are still pending; see [checklist](docs/checklist.md).
 
 The native GTK interface includes a manual search window, tabbed floating reading/writing panels, and settings for privacy, models, dictionaries, and panel visibility. Dictionary management lists installed sources and supports catalogue downloads and imports. Lookups show source attribution; models and dictionaries are separate installations.
 
+The **Suggestions** tab offers local corrections, dictionary synonyms for words, and model-generated corrections or alternative phrasing for words and phrases. Choices include Apply, Copy, and Dismiss. Search Apply updates the input; floating Apply requires verified text and rejects stale suggestions. The Suggestions visibility switch is in Settings → Text assistant and preserves its saved preference. Search has no separate lookup or Copy result buttons; typing runs the work automatically, and Enter still copies the selected tab's result.
+
 The HUD can switch between compact and fullscreen views. Panel content scrolls independently, and the manual search window provides a focusable path for keyboard use. See [interface design](docs/interface-design.md) for the current behavior and validation procedure.
 
 ## Intended workflow
 
 - **Read:** Select English or Arabic text for a dictionary entry or sentence
-  translation; use `Alt+G` for a focused manual lookup.
+  translation; use `Alt+G` to open or close the focused lookup window. Search translates automatically between English and Arabic as you type, keeps Translation available in either language, and preserves your selected tab.
 - **Write:** Keep every enabled HUD section available while typing. Local word lookup appears
   first; labeled AI details and translation follow after a sentence ends with a dot (`.`). English
   corrections run locally, and phrasing starts at two words by default. Existing text is not reconstructed after
   arbitrary edits; uncertain navigation or focus changes reset the buffer.
 - **Accept:** `Ctrl+Alt+Enter` applies a suggestion only when its text and target
   are verified. Otherwise, use Copy and paste it yourself.
-- **Control:** Pause assistance globally; terminal writing requires explicit
-  prose mode and resets when focus changes.
+- **Control:** Pause automatic assistance without disabling manual tools; terminal writing requires
+  temporary permission and resets when focus changes.
 
 When a cloud endpoint and credentials are configured, enabled applications can
 send text automatically for translation and rewriting. Local dictionaries and
@@ -40,7 +42,7 @@ for selection and search translation through direct HTTP APIs. Set
 `[model] translation_engine` to `"google"`, `"bing"`, `"yandex"` or `"apertium"`,
 or use the engine picker. The default `"model"` preserves existing routing.
 Google, Bing and Yandex work without API keys: select the engine and click
-Save settings. Turn off General → Offline only to permit online requests.
+Save settings. Turn off Privacy → Offline only to permit online requests.
 These keyless web/client interfaces are unofficial and may change, rate-limit
 requests, or reject them. Google keyless accepts up to 5000 characters and Bing
 up to 1000 UTF-16 units; longer selections use local Ollama with a notice.
@@ -102,17 +104,69 @@ For a local development run, start
 installs the optional user service and sample bindings. No input-group or
 `uinput` permissions are required by the compositor bridge.
 
+The main window opens fullscreen. Input and results share the workspace equally,
+side by side on wide windows and stacked on windows narrower than about 1000 pixels.
+
+## Screenshot and image input
+
+Run `writy screenshot` to select a screen area and open a fresh search with its
+recognized text. The sample Hyprland bindings use **Ctrl+Alt+O**. Escape cancels
+selection and preserves your existing input. The shortcut also starts the daemon
+when necessary.
+
+Paste an image with **Ctrl+V** in the search input. A loading badge appears at the
+cursor, replacing selected text when present; surrounding words stay intact.
+Keep typing or paste more images while extraction runs. Each result replaces
+its own badge; deleting a badge discards its result. Images are processed in paste
+order. Failures and images without text show Retry and Remove; error details are
+in the badge's tooltip. If reading the clipboard itself failed, Retry reads the
+current clipboard again.
+
+Extraction runs locally using Tesseract with English and Arabic language data.
+Images are kept in memory and are not uploaded or saved by Writy. Recognized text
+uses the normal lookup/translation flow and existing privacy/provider settings.
+Lookup ignores pending and failed badges. Image limits are 16 MiB encoded and
+32 million pixels; extracted text is limited to the normal 8192 characters.
+Extraction times out after 30 seconds. OCR quality depends on text size, contrast,
+font, and layout; edit any recognition errors in the input.
+
+Required Arch packages:
+
+```sh
+sudo pacman -S --needed grim slurp tesseract tesseract-data-eng tesseract-data-ara
+```
+
+`writy doctor` checks the capture/OCR executables. The extraction badge reports
+missing language data. No vision model or cloud image service is required.
+
+## Automatic assistance and settings
+
+Settings provides independent **Show on selection**, **Show on copy**, and
+**Show while typing** controls. Selection and typing default on; copy defaults off.
+**Dismiss** hides a suggestion until the text changes or you leave the field.
+
+Selecting and then copying the same text reuses the Text assistant and its
+analysis while the source context remains valid. Writy's own Copy actions do not
+trigger another lookup. Automatic selection/copy watching requires `wl-clipboard`;
+missing clipboard access shows a notice and leaves manual lookup available.
+
+**Pause automatic assistance** temporarily stops all automatic triggers and
+pending automatic requests. **Resume automatic assistance** restores the saved
+choices. Manual search and lookup remain usable while paused. `writy pause`
+toggles the same temporary state, independently of the legacy saved `enabled` gate.
+
 ## Commands
 
 ```sh
 writy daemon
-writy search                         # focused manual lookup
+writy search                         # toggle the focused lookup window
+writy screenshot                     # capture an area and extract its text locally
 writy translate                      # alias for search
 writy lookup --selection             # current Wayland primary selection
 writy lookup 'make a decision'
 writy accept                         # accept the current verified suggestion
-writy pause                          # toggle global pause
-writy prose                          # toggle terminal prose for current focus
+writy pause                          # pause/resume automatic assistance
+writy prose                          # allow assistance in this terminal until focus changes
 writy settings                       # choose installed Ollama models and edit configuration
 writy models                         # list every installed Ollama tag
 writy status
@@ -195,7 +249,7 @@ system, configured model service, or cloud provider never retains data.
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+python tests/unit.py
 cargo build --release --locked
 ```
 

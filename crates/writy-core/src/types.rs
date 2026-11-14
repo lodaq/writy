@@ -63,7 +63,6 @@ pub enum SuggestionKind {
     Rewrite,
     Spelling,
     Grammar,
-    Completion,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -79,6 +78,12 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
+    pub fn same_edit(&self, other: &Self) -> bool {
+        self.snapshot.same_context(&other.snapshot)
+            && self.start == other.start
+            && self.end == other.end
+            && self.replacement == other.replacement
+    }
     pub fn matches(&self, current: &TextSnapshot) -> bool {
         self.snapshot.same_context(current)
             && self.start <= self.end
@@ -136,6 +141,7 @@ pub struct LexicalEntry {
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
     WritingAssistance,
+    Improve,
     Rewrite,
     Translate,
 }
@@ -147,4 +153,49 @@ pub struct ProviderResult {
     pub text: String,
     pub provider: String,
     pub notice: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_choice_keeps_its_edit_identity_after_reordering_and_rejects_changed_context() {
+        let choice = Suggestion {
+            snapshot: TextSnapshot {
+                source: "editor".into(),
+                focus_epoch: 1,
+                revision: 1,
+                language: Language::English,
+                text: "bad".into(),
+                confidence: Confidence::Projected,
+            },
+            start: 0,
+            end: 3,
+            replacement: "better".into(),
+            description: "Alternative".into(),
+            kind: SuggestionKind::Rewrite,
+            provider: "fixture".into(),
+        };
+        let other = Suggestion {
+            replacement: "clearer".into(),
+            ..choice.clone()
+        };
+        let reordered = [other, choice.clone()];
+        assert_eq!(
+            reordered
+                .iter()
+                .find(|item| item.same_edit(&choice))
+                .unwrap()
+                .replacement,
+            "better"
+        );
+        let changed = Suggestion {
+            end: 2,
+            ..choice.clone()
+        };
+        assert!(!changed.same_edit(&choice));
+        let mut stale = choice.clone();
+        stale.snapshot.revision += 1;
+        assert!(!stale.same_edit(&choice));
+    }
 }

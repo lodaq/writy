@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -35,6 +37,24 @@ def main():
     parser.add_argument("--with-model", action="store_true", help="Exercise installed offline Ollama models with synthetic fixture text")
     parser.add_argument("--fixture-only", action="store_true", help="Hold a nested fixture for broker diagnostics; stdin selects prose/password/clear or quit")
     args = parser.parse_args()
+    if os.environ.get('WRITY_TEST_PRIVATE_BUS') != '1':
+        with tempfile.TemporaryDirectory(prefix='wb-') as private:
+            parent_display = Path(os.environ['WAYLAND_DISPLAY'])
+            if not parent_display.is_absolute():
+                parent_display = Path(os.environ['XDG_RUNTIME_DIR']) / parent_display
+            services=Path(private)/'services';services.mkdir()
+            for name in ('org.a11y.Bus.service','ca.desrt.dconf.service'):
+                shutil.copy2(Path('/usr/share/dbus-1/services')/name,services/name)
+            bus_config=Path(private)/'session.conf'
+            bus_config.write_text(f'<busconfig><type>session</type><listen>unix:path={private}/session.sock</listen><auth>EXTERNAL</auth><servicedir>{services}</servicedir><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
+            env = dict(os.environ, WRITY_TEST_PRIVATE_BUS='1', HOME=private,
+                       WAYLAND_DISPLAY=str(parent_display), XDG_RUNTIME_DIR=private,
+                       XDG_CONFIG_HOME=private+'/config', XDG_DATA_HOME=private+'/data',
+                       XDG_CACHE_HOME=private+'/cache', GDK_DEBUG='no-portals', GIO_USE_VFS='local', ATSPI_DBUS_IMPLEMENTATION='dbus-daemon')
+            for key in ('DBUS_SESSION_BUS_ADDRESS', 'DBUS_STARTER_ADDRESS', 'AT_SPI_BUS_ADDRESS'):
+                env.pop(key, None)
+            return subprocess.call(['dbus-run-session', '--config-file='+str(bus_config), '--', sys.executable,
+                                    str(Path(__file__).resolve()), *sys.argv[1:]], env=env)
     binary = args.binary.resolve(strict=not args.fixture_only)
     plugin = args.plugin.resolve(strict=True)
     original_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -67,6 +87,7 @@ hl.config({
  misc = {disable_hyprland_logo = true, disable_splash_rendering = true},
  input = {kb_layout = "us,ara", resolve_binds_by_sym = true}
 })
+hl.device({name = "wl_pointer", enabled = false})
 """)
         acceptance = base / "accept.sh"
         acceptance.write_text("#!/bin/sh\n" + "\n".join(
@@ -131,8 +152,11 @@ hl.config({
                                       text=True, check=True, timeout=5).stdout.strip()
             def status():
                 try:
-                    return json.loads(cli("status"))
-                except (subprocess.CalledProcessError, json.JSONDecodeError):
+                    with socket.socket(socket.AF_UNIX) as connection:
+                        connection.settimeout(3);connection.connect(str(base/'writy/control.sock'))
+                        connection.sendall(b'{"command":"status"}\n');connection.shutdown(socket.SHUT_WR)
+                        return json.loads(connection.makefile('r').readline(131073))
+                except (OSError, json.JSONDecodeError):
                     return None
             daemon_log = (base / "daemon.log").open("w+")
             daemon = subprocess.Popen([str(binary), "daemon"], env=nested_env, stdout=daemon_log, stderr=daemon_log)
@@ -270,7 +294,38 @@ hl.config({
             wait_for(lambda: len(layers()) == 1, "restored reading HUDs")
 
             cli("copy")
-            wait_for(lambda: subprocess.run(["wl-paste","--no-newline"],env=nested_env,capture_output=True,text=True).stdout=="قرار", "translation copied without labels")
+            wait_for(lambda: subprocess.run(["wl-paste","--no-newline"],env=nested_env,capture_output=True,text=True).stdout=="choice", "first suggestion copied without labels")
+            app_config = base / "config/writy/config.toml"
+            original_config = app_config.read_text()
+            app_config.write_text(original_config.replace("selection_popup = true", "selection_popup = false\ncopy_popup = true\ntyping_popup = false"))
+            def control(command):
+                with socket.socket(socket.AF_UNIX) as connection:
+                    connection.connect(str(base / "writy/control.sock"))
+                    connection.sendall((json.dumps(command) + "\n").encode())
+                    return connection.recv(8192).decode().strip()
+            assert control({"command": "reload"}) == "ok"
+            wait_for(lambda: (s := status()) and s["copy_popup"] and not s["capture"], "copy enabled without typing capture")
+            copying = subprocess.Popen(["wl-copy", "--foreground", "decision"], env=nested_env)
+            processes.append(copying)
+            wait_for(lambda: (s := status()) and s["selection_active"] and s["dictionary_matches"] > 0, "automatic clipboard lookup")
+            generation_before = status()["revision"]
+            cli("copy")
+            wait_for(lambda: "application/x-writy-result" in subprocess.run(["wl-paste", "--list-types"], env=nested_env, capture_output=True, text=True).stdout, "Writy clipboard ownership marker")
+            time.sleep(.4)
+            assert status()["revision"] == generation_before, "Writy Copy must not trigger another lookup"
+            cli("dismiss")
+            copying_again = subprocess.Popen(["wl-copy", "--foreground", "decision"], env=nested_env)
+            processes.append(copying_again)
+            wait_for(lambda: (s := status()) and s["selection_active"] and s["dictionary_matches"] > 0, "later external copy of the same text is not suppressed")
+            cli("pause")
+            assert status()["paused"]
+            assert status()["copy_popup"] and not status()["typing_popup"]
+            cli("lookup", "decision")
+            assert status()["dictionary_matches"] > 0, "Manual lookup must work while paused"
+            cli("pause")
+            assert not status()["paused"]
+            app_config.write_text(original_config)
+            assert control({"command": "reload"}) == "ok"
             selecting.terminate()
             selecting.wait(timeout=5)
             cli("search")
@@ -297,7 +352,7 @@ hl.config({
             assert "ok" in ctl("plugin", "unload", str(plugin)).lower()
             assert compositor.poll() is None
             print(json.dumps({"nested_only": True, "hyprland": "0.56.2", "bridge": True, "live_buffer": True,
-                              "harper": True, "verified_edit": True, "dictionary_lookup": True, "primary_selection": True, "acceptance_shortcut": True, "clipboard": True, "search": True, "hud_budget": True, "secure_field": True, "mixed_script": True,
+                              "harper": True, "verified_edit": True, "dictionary_lookup": True, "primary_selection": True, "acceptance_shortcut": True, "clipboard": True, "automatic_copy": True, "self_copy_suppressed": True, "independent_controls": True, "pause_manual_lookup": True, "search": True, "hud_budget": True, "secure_field": True, "mixed_script": True,
                               "input_preserved_live_hang_exit": True, "unload": True,
                               "observed_buffer_chars": live["buffer_chars"], "daemon_rss_kib":memory_kib, "artifacts": str(base) if args.keep_temp else None}))
         except Exception:
@@ -330,4 +385,4 @@ hl.config({
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

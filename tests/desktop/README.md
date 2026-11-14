@@ -10,7 +10,10 @@ python tests/desktop/run.py
 ```
 
 The test needs Hyprland 0.56.2, wtype, a C compiler, GTK4 development headers,
-pkgconf and Python 3. An existing Wayland session hosts the nested compositor.
+pkgconf and Python 3. An existing Wayland session hosts the nested compositor. This can open a visible
+window and disrupt the parent session: do not use this harness unchanged when
+headless or non-disruptive testing is required. It also inherits the session bus;
+private XDG paths alone do not isolate accessibility.
 An optional `--screenshot /absolute/path.png` uses grim against the nested socket
 only. `--binary` and `--plugin` accept alternative local build artifacts.
 
@@ -46,6 +49,34 @@ Run the isolated native component gallery with:
 python tests/desktop/gallery.py --output /tmp/writy-ui
 ```
 
-It uses a private nested Wayland compositor and synthetic bilingual data. It does
-not run the Writy backend, load the compositor bridge, capture desktop content,
-or contact a configured model server.
+It uses Xvfb with software GTK rendering and synthetic bilingual data, inside a
+Bubblewrap sandbox with private network, display sockets, devices, home/runtime,
+and a fresh D-Bus session. It requires `bwrap`, `dbus-run-session`, `xvfb-run`,
+and the installed build dependencies. No system packages are installed by the script.
+The build is offline, locked, and limited to two jobs; the compiled test executable
+runs inside the sandbox with the source mounted read-only. Only the private fixture
+and requested screenshot output directory are writable host mounts.
+
+The gallery does not run the Writy backend, load the compositor bridge, capture
+desktop content, contact a configured model server, or prove AT-SPI/Wayland marker
+positioning. GLX is disabled to avoid loading GPU drivers in device isolation.
+Portal integration is disabled; dictionary and UI tests use only local files.
+
+## Local image input
+
+```sh
+python tests/desktop/image_input.py
+```
+
+Requires `xvfb-run`, `dbus-run-session`, Tesseract and its English/Arabic data.
+Runs GTK on an isolated X11 display and a private session bus. Clipboard images
+and OCR fixtures are synthetic. Stub `slurp`/`grim` executables test cancellation
+and completed capture without reading the real desktop; Tesseract is real.
+Checks cover mixed English/Arabic recognition, ordinary text paste, image paste,
+selection replacement, edits around moving badges, queued images, deleted
+in-flight badges, invalid/no-text images, Retry/Remove, process output limits and
+timeouts. This does not establish live Wayland region-selection behavior or OCR
+quality across arbitrary screenshots.
+
+The PNG fixtures contain only generated text, rendered with Pillow and DejaVu
+Sans: `Hello world` and a second mixed-language fixture adding `مرحبا بالعالم`.

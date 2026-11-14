@@ -5,6 +5,7 @@ hl.on("hyprland.start", function()
 end)
 
 hl.bind("ALT + G", hl.dsp.exec_cmd("writy search"))
+hl.bind("CTRL + ALT + O", hl.dsp.exec_cmd("writy screenshot"))
 hl.bind("CTRL + ALT + G", hl.dsp.exec_cmd("writy lookup --selection"))
 hl.bind("CTRL + ALT + Return", hl.dsp.exec_cmd("writy accept"))
 hl.bind("CTRL + ALT + W", hl.dsp.exec_cmd("writy pause"))

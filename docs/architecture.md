@@ -40,6 +40,21 @@ sequence numbers, and focus epochs. It starts with capture disabled; the daemon
 must authorize the current focus epoch. A gap, disconnect, or invalid context
 resets the projected typing state.
 
+## Assistance controls
+
+Saved `selection_popup`, `copy_popup`, and `typing_popup` preferences control
+independent triggers. Temporary pause stops automatic work without changing those
+preferences. Typing capture additionally requires `typing_popup`. Dismissed
+suggestions remain suppressed for the unchanged field context.
+
+PRIMARY and regular clipboard watchers reuse `wl-paste --watch` and bounded
+selection/copy event commands. Watchers start/stop on preference or pause changes;
+failed watchers show a notice and can be retried by toggling the setting. Writy
+clipboard content includes an application MIME marker so copying a result cannot
+trigger a new automatic request. Selection followed by a copy shortcut preserves
+read-only analysis while discarding any editing anchor. Other context changes
+retain generation invalidation and verified replacement rules.
+
 ## Request and edit flow
 
 Selection or search produces a reading request. Newly typed English prose
@@ -113,6 +128,6 @@ or inapplicable categories keep an explicit visible state in insert mode.
 
 Dictionary source preferences live in the lexical database, keyed by the stable
 source identity. Disabled sources remain installed but are excluded before result
-and completion limits are applied. Reimporting a source preserves its preference.
+limits are applied. Reimporting a source preserves its preference.
 Settings combines a curated install/import catalogue with every installed source;
 source switches save immediately and invalidate already displayed results.

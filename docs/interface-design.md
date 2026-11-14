@@ -6,44 +6,6 @@ navigation. The intended feeling is calm, immediate and predictable.
 
 ## Component contract
 
-- Search: one primary lookup action, a separate translation action, labelled
-  multiline input, and a scrollable result collection. Copy is unavailable until
-  a result exists. Welcome, generating and no-result states explain the next step.
-- Results: category and copy action share a header; source headings organize
-  readable, selectable entries. Copy confirmation stays on the control that caused it.
-  Status messages are never offered as copyable writing suggestions.
-- Floating panels: seven logical categories use tabs in a fixed-size reading
-  surface. Each page scrolls independently while the draggable header, tab strip
-  and footer stay visible. Shift + scroll cycles through enabled sections.
-  Bodies wrap without truncation; each page has Copy and source attribution.
-  Updates to the same query retain reading positions and text selections.
-  The compact area uses 72% of monitor height (maximum 680 logical pixels);
-  fullscreen fills the current monitor. Restore returns to the compact size and
-  manually selected position.
-  The surface never takes keyboard focus; Alt+G provides a keyboard-accessible
-  search view. Non-editing screenshot keys and temporary focus/shortcut resets
-  retain displayed reference text while the backend invalidates correction
-  anchors. Ordinary app switches, secure fields, locks, new typing and explicit
-  dismissal still clear stale results. During Flameshot capture, the HUD moves
-  below the fullscreen annotation surface; screenshot annotations and selections
-  are excluded from automatic writing capture.
-- Settings: General, Models, Panels and Dictionaries are native tabs, each with
-  its own scrolling page. Binary preferences use labelled switches in aligned rows.
-  Installed model choices and cloud configuration are disclosed on demand.
-  Save and operation feedback remain outside the scrolling form. Reopening settings
-  presents the existing window and retains unsaved edits during the session.
-  Escape dismisses the window. Dictionary switches save immediately; other
-  preferences use Save settings.
-- Dictionary library: Downloaded and Explore have distinct headings; descriptions,
-  installation state and source links stay beside their dictionary. Download is a
-  quiet tinted action, Remove uses the theme's destructive colour, and actions
-  wrap into additional rows when the window or font requires it.
-- Controls: immediate native press feedback, a visible keyboard focus ring,
-  semantic theme colours and explicit disabled states. Text and labels wrap
-  within narrow containers; input direction follows English or Arabic. Category
-  captions stay on one line with readable minimum widths, native overflow arrows
-  and full-name tooltips. Source attribution is selectable in its reading page.
-
 ## Native accessibility and materials
 
 Typography inherits the desktop font size. Colours follow the GTK theme,
@@ -127,8 +89,7 @@ without presentation numbers. Publisher markup is retained only where it maps to
 one definition exactly. Floating panels keep the query in their header.
 
 Search follows the supplied 1402 × 1122 reference: proportional side insets
-(20–80 logical pixels), an inline brand/language/settings header, broad lookup
-and translation buttons, and one bordered reading surface containing its tabs.
+(20–80 logical pixels), an inline brand/language/settings header, automatic lookup and improvement, and one bordered reading surface containing its tabs.
 The charcoal surface and blue primary action retain theme-aware text and a
 light appearance; typography scales with the desktop font. Narrow windows stack
 the header and actions, wrap text, and
@@ -136,7 +97,7 @@ scroll the results; larger system fonts can also scroll the whole form rather th
 clip controls or the footer. Arabic headwords lead each RTL entry, with sense
 numbers at the right and multiline details together underneath. Arramooz's
 empty formatting lines are removed for display and adjacent verb attributes
-share a compact line; copying retains the original dictionary text. Pango handles
+share a compact line; copying retains the original dictionary text. Typing automatically translates between English and Arabic when dictionaries have no translation. Suggestions stays available for both words and phrases, with individually applicable corrections and alternatives. Search Apply replaces the input only if it still matches the suggestion source; floating Apply uses the verified external-edit path. The former top lookup and Copy result buttons are hidden; per-section and per-choice Copy actions remain. Translation remains available in either language, and the selected tab survives loading and language changes. Alt+G toggles the search window without pausing background assistance. Compact line spacing is shared across labels. Pango handles
 logical text alignment: adding right justification to an RTL label would mirror
 its paragraph a second time and misplace it.
 
@@ -228,3 +189,6 @@ off and confirm static feedback. Slow press feedback to 5x for visual inspection
 then restore 160ms. DONE when those checks pass and the installed app is restarted.
 
 Verified: workspace tests, strict Clippy, native Wayland component gallery, and two consecutive desktop integration runs. The release was rebuilt and the user service restarted.
+
+Panel titles and section tabs retain their full names. Never ellipsize, abbreviate,
+or reduce their text size to fit. Scrollable tabs provide access when space is limited.

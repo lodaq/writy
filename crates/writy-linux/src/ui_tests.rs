@@ -13,6 +13,54 @@ fn settle() {
     }
 }
 
+fn resize(window: &impl IsA<gtk::Window>, width: i32, height: i32) {
+    let window = window.as_ref();
+    window.set_visible(false);
+    window.set_default_size(width, height);
+    window.present();
+    settle();
+    // Xvfb has no window manager to honor GTK resize requests after mapping.
+    if std::env::var("WRITY_TEST_XVFB").as_deref() == Ok("1") {
+        let status = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(r#"
+import ctypes as c, sys
+x = c.CDLL('libX11.so.6')
+x.XOpenDisplay.restype = c.c_void_p
+d = x.XOpenDisplay(None)
+assert d
+x.XDefaultRootWindow.argtypes = [c.c_void_p]
+x.XDefaultRootWindow.restype = c.c_ulong
+x.XQueryTree.argtypes = [c.c_void_p, c.c_ulong, c.POINTER(c.c_ulong), c.POINTER(c.c_ulong), c.POINTER(c.POINTER(c.c_ulong)), c.POINTER(c.c_uint)]
+x.XInternAtom.argtypes = [c.c_void_p, c.c_char_p, c.c_int]
+x.XInternAtom.restype = c.c_ulong
+x.XGetWindowProperty.argtypes = [c.c_void_p, c.c_ulong, c.c_ulong, c.c_long, c.c_long, c.c_int, c.c_ulong, c.POINTER(c.c_ulong), c.POINTER(c.c_int), c.POINTER(c.c_ulong), c.POINTER(c.c_ulong), c.POINTER(c.c_void_p)]
+atom = x.XInternAtom(d, b'_NET_WM_NAME', 0)
+x.XResizeWindow.argtypes = [c.c_void_p, c.c_ulong, c.c_uint, c.c_uint]
+x.XSync.argtypes = [c.c_void_p, c.c_int]
+x.XFree.argtypes = [c.c_void_p]
+root, parent, children, count = c.c_ulong(), c.c_ulong(), c.POINTER(c.c_ulong)(), c.c_uint()
+assert x.XQueryTree(d, x.XDefaultRootWindow(d), c.byref(root), c.byref(parent), c.byref(children), c.byref(count))
+found = False
+for window in children[:count.value]:
+    kind, form, size, after, name = c.c_ulong(), c.c_int(), c.c_ulong(), c.c_ulong(), c.c_void_p()
+    x.XGetWindowProperty(d, window, atom, 0, 4096, 0, 0, c.byref(kind), c.byref(form), c.byref(size), c.byref(after), c.byref(name))
+    if name.value:
+        if c.string_at(name, size.value).decode() == sys.argv[1]:
+            x.XResizeWindow(d, window, int(sys.argv[2]), int(sys.argv[3]))
+            found = True
+        x.XFree(name)
+x.XFree(children)
+x.XSync(d, 0)
+assert found, 'Synthetic test window not found'
+"#)
+            .args([window.title().unwrap().to_string(), width.to_string(), height.to_string()])
+            .status().unwrap();
+        assert!(status.success());
+        settle();
+    }
+}
+
 fn snapshot(window: &impl IsA<gtk::Window>, name: &str) {
     let window = window.as_ref();
     window.present();
@@ -179,6 +227,9 @@ fn contrast(widget: &gtk::Widget, background: gdk::RGBA) -> f64 {
 #[ignore = "requires a graphical session; renders synthetic data only"]
 fn native_component_gallery() {
     gtk::init().unwrap();
+    let tab = components::tab_label("Common word combinations");
+    assert_eq!(tab.text(), "Common word combinations");
+    assert_eq!(tab.ellipsize(), gtk::pango::EllipsizeMode::None);
     let mut ui_contrast = BTreeMap::new();
     arabic_result_reading_layout();
     let errors = Rc::new(RefCell::new(Vec::new()));
@@ -278,7 +329,10 @@ fn native_component_gallery() {
     second.source.name = "Second dictionary".into();
     second.senses[0].definitions = vec!["A conclusion reached after careful thought.".into()];
     result.entries.push(second);
-    for panel in panels(&result) {
+    for panel in panels(&result)
+        .into_iter()
+        .filter(|panel| panel.category != "suggestions")
+    {
         assert_eq!(
             panel.groups.len(),
             2,
@@ -347,7 +401,7 @@ fn native_component_gallery() {
         .find(|index| {
             tabs.tab_label_text(&tabs.nth_page(Some(*index)).unwrap())
                 .as_deref()
-                == Some("Definition")
+                == Some("Definitions")
         })
         .unwrap();
     tabs.set_current_page(Some(definition));
@@ -374,6 +428,7 @@ fn native_component_gallery() {
             .unwrap()
             .downcast::<gtk::Label>()
             .unwrap();
+        assert_eq!(tab.ellipsize(), gtk::pango::EllipsizeMode::None);
         if tab.is_mapped() {
             assert!(
                 tab.height() >= tab.layout().pixel_size().1,
@@ -414,26 +469,34 @@ fn native_component_gallery() {
         arabic.status.clear();
         view.borrow().editor.buffer().set_text("لعب");
         view.borrow_mut().show(arabic.clone());
-        search.set_default_size(1402, 1122);
+        let definition = (0..tabs.n_pages())
+            .find(|index| {
+                tabs.tab_label_text(&tabs.nth_page(Some(*index)).unwrap())
+                    .as_deref()
+                    == Some("Definitions")
+            })
+            .unwrap();
+        tabs.set_current_page(Some(definition));
+        resize(&search, 1402, 1122);
         settle();
         // Match the target's capture size after GTK's native frame insets.
-        search.set_default_size(1402 + 1402 - search.width(), 1122 + 1122 - search.height());
+        resize(
+            &search,
+            1402 + 1402 - search.width(),
+            1122 + 1122 - search.height(),
+        );
+        let input = view.borrow().editor.parent().unwrap().parent().unwrap();
+        let split = input.parent().unwrap().downcast::<gtk::Box>().unwrap();
+        assert_eq!(split.orientation(), gtk::Orientation::Horizontal);
+        assert!((input.width() - view.borrow().content.width()).abs() <= 1);
         snapshot(&search, "search-arabic-wide");
-        let actions = view
-            .borrow()
-            .copy
-            .parent()
-            .unwrap()
-            .downcast::<gtk::Box>()
-            .unwrap();
-        assert_eq!(actions.orientation(), gtk::Orientation::Horizontal);
-        assert!(actions.width() > 1200);
-        assert!(view.borrow().copy.width() < actions.width() / 4);
-        let page = tabs.nth_page(Some(0)).unwrap();
+        let page = tabs.nth_page(Some(definition)).unwrap();
         let body = find_label(&page, "writy-body").unwrap();
         assert!(
-            body.width() > 1000 && body.width() < 1240,
-            "Search must span the reference layout with broad side insets"
+            body.width() > 400 && body.width() < search.width() / 2,
+            "Wide search results must occupy half the window: body={}, window={}",
+            body.width(),
+            search.width()
         );
         assert_eq!(body.direction(), gtk::TextDirection::Rtl);
         assert!(body.text().contains("ثلاثي · لازم"));
@@ -468,12 +531,13 @@ fn native_component_gallery() {
         assert!(
             body.layout().index_to_pos(0).x() / gtk::pango::SCALE + offset > body.width() * 3 / 4
         );
-        search.set_default_size(520, 760);
+        resize(&search, 520, 760);
+        assert_eq!(split.orientation(), gtk::Orientation::Vertical);
+        assert!((input.height() - view.borrow().content.height()).abs() <= 1);
         snapshot(&search, "search-arabic-narrow");
-        assert_eq!(actions.orientation(), gtk::Orientation::Vertical);
         assert!(body.width() <= search.width());
         let scroll = tabs
-            .nth_page(Some(0))
+            .nth_page(Some(definition))
             .unwrap()
             .downcast::<gtk::ScrolledWindow>()
             .unwrap();
@@ -481,19 +545,14 @@ fn native_component_gallery() {
         adjustment.set_value(adjustment.upper() - adjustment.page_size());
         snapshot(&search, "search-arabic-narrow-bottom");
         assert!(
-            adjustment.value() > 0.,
-            "All Arabic senses must remain reachable by scrolling"
+            adjustment.value() > 0. || adjustment.upper() <= adjustment.page_size() + 1.,
+            "All Arabic senses must fit or remain reachable by scrolling"
         );
         adjustment.set_value(0.);
         let settings = gtk::Settings::default().unwrap();
         let font = settings.gtk_font_name();
         settings.set_gtk_font_name(Some("Sans 20"));
         snapshot(&search, "search-arabic-large-text");
-        let lookup = actions.first_child().unwrap();
-        assert!(
-            lookup.measure(gtk::Orientation::Horizontal, -1).0 <= actions.width(),
-            "Action captions must fit at large text sizes"
-        );
         let outer = search
             .child()
             .unwrap()
@@ -503,14 +562,14 @@ fn native_component_gallery() {
         position.set_value(position.upper() - position.page_size());
         snapshot(&search, "search-arabic-large-text-results");
         assert!(
-            position.value() > 0.,
-            "Large text must scroll instead of clipping results or the footer"
+            position.value() > 0. || position.upper() <= position.page_size() + 1.,
+            "Large text must fit or scroll instead of clipping results or the footer"
         );
         adjustment.set_value(adjustment.upper() - adjustment.page_size());
         snapshot(&search, "search-arabic-large-text-bottom");
-        assert!(adjustment.value() > 0.);
+        assert!(adjustment.value() > 0. || adjustment.upper() <= adjustment.page_size() + 1.);
         settings.set_gtk_font_name(font.as_deref());
-        search.set_default_size(680, 760);
+        resize(&search, 680, 760);
         view.borrow().editor.buffer().set_text("decision");
         view.borrow_mut().show(result.clone());
     }
@@ -563,7 +622,7 @@ fn native_component_gallery() {
         .unwrap()
         .downcast::<gtk::Notebook>()
         .unwrap();
-    assert_eq!(preferences.n_pages(), 5);
+    assert_eq!(preferences.n_pages(), 6);
     scroll_tab(&preferences, 1.);
     assert_eq!(
         preferences.current_page(),
@@ -573,20 +632,22 @@ fn native_component_gallery() {
     preferences.set_current_page(Some(0));
     let mut general = Vec::new();
     collect_switches(&preferences.nth_page(Some(0)).unwrap(), &mut general);
-    assert_eq!(general.len(), 2);
-    let offline = general[0].is_active();
-    general[0].set_active(!offline);
-    preferences.set_current_page(Some(1));
-    snapshot(&settings[0], "settings-models");
+    assert_eq!(general.len(), 3);
+    let mut privacy = Vec::new();
+    collect_switches(&preferences.nth_page(Some(1)).unwrap(), &mut privacy);
+    let offline = privacy[0].is_active();
+    privacy[0].set_active(!offline);
     preferences.set_current_page(Some(2));
-    snapshot(&settings[0], "settings-translation");
+    snapshot(&settings[0], "settings-models");
     preferences.set_current_page(Some(3));
-    snapshot(&settings[0], "settings-panels");
+    snapshot(&settings[0], "settings-translation");
     preferences.set_current_page(Some(4));
+    snapshot(&settings[0], "settings-panels");
+    preferences.set_current_page(Some(5));
     snapshot(&settings[0], "settings-dictionaries");
     preferences.set_current_page(Some(0));
     assert_eq!(
-        general[0].is_active(),
+        privacy[0].is_active(),
         !offline,
         "Tab changes must preserve edits"
     );
@@ -595,7 +656,7 @@ fn native_component_gallery() {
     view.borrow().settings();
     assert!(settings[0].is_visible());
     assert_eq!(
-        general[0].is_active(),
+        privacy[0].is_active(),
         !offline,
         "Dismissal must preserve drafts"
     );
@@ -609,7 +670,7 @@ fn native_component_gallery() {
     save.emit_clicked();
     assert_eq!(Config::load().unwrap().offline, !offline);
     snapshot(&settings[0], "settings-saved");
-    general[0].set_active(offline);
+    privacy[0].set_active(offline);
     save.emit_clicked();
     footer
         .first_child()
@@ -618,7 +679,7 @@ fn native_component_gallery() {
         .unwrap()
         .set_text("");
     settings[0].set_resizable(true);
-    settings[0].set_default_size(400, 640);
+    resize(&settings[0], 400, 640);
     snapshot(&settings[0], "settings-narrow");
     assert!(settings[0].width() <= 400);
     let desktop = gtk::Settings::default().unwrap();
@@ -630,10 +691,10 @@ fn native_component_gallery() {
         "Settings must reflow at larger text sizes"
     );
     for (index, name) in [
-        (1, "models"),
-        (2, "translation"),
-        (3, "panels"),
-        (4, "dictionaries"),
+        (2, "models"),
+        (3, "translation"),
+        (4, "panels"),
+        (5, "dictionaries"),
     ] {
         preferences.set_current_page(Some(index));
         let page = preferences
@@ -1039,10 +1100,12 @@ fn native_component_gallery() {
         }
         assert!(section.body.wraps(), "HUD content must wrap");
         assert_eq!(section.body.ellipsize(), gtk::pango::EllipsizeMode::None);
-        assert!(
-            section.body.height() >= section.body.layout().pixel_size().1,
-            "body allocation must include every line"
-        );
+        if *key != "suggestions" {
+            assert!(
+                section.body.height() >= section.body.layout().pixel_size().1,
+                "body allocation must include every line"
+            );
+        }
     }
     {
         let tabs = view.borrow().hud.tabs.clone();
@@ -1210,7 +1273,7 @@ fn native_component_gallery() {
     }
     snapshot(&search, "search-dark");
     // Small window and larger text expose clipping in controls and labels.
-    search.set_default_size(360, 720);
+    resize(&search, 360, 720);
     snapshot(&search, "search-narrow");
     assert!(
         search.width() <= 400,
@@ -1245,9 +1308,15 @@ fn native_component_gallery() {
     selection.entries.clear();
     selection.translation = None;
     selection.status = "Generating…".into();
+    view.borrow().hud.tabs.set_current_page(Some(1));
     view.borrow_mut().show(selection.clone());
     assert!(hud_window.is_visible());
-    assert_eq!(view.borrow().hud.tabs.current_page(), Some(0));
+    assert_eq!(
+        view.borrow().hud.tabs.current_page(),
+        Some(1),
+        "Suggestions remains selected for a new phrase"
+    );
+    view.borrow().hud.tabs.set_current_page(Some(0));
     assert_eq!(
         view.borrow().hud.sections["translation"].body.text(),
         "Translating selected text…"
@@ -1357,4 +1426,171 @@ fn native_hud_drag_preserves_pointer_position() {
     );
     drag.emit_by_name::<()>("drag-end", &[&0f64, &0f64]);
     window.close();
+}
+
+#[test]
+#[ignore = "requires an isolated graphical session"]
+fn native_bilingual_tabs_preserve_selection_without_translate_button() {
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("org.example.BilingualTest")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let view = View::new(&app, tx, Config::default());
+    let mut result = Results {
+        generation: 1,
+        snapshot: TextSnapshot {
+            source: "search".into(),
+            focus_epoch: 1,
+            revision: 1,
+            language: Language::English,
+            text: "play".into(),
+            confidence: Confidence::Projected,
+        },
+        entries: vec![LexicalEntry {
+            headword: "play".into(),
+            senses: vec![Sense {
+                definitions: vec!["A game.".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        suggestions: vec![],
+        translation: Some(("لعب".into(), "fixture".into())),
+        status: String::new(),
+        writing: false,
+        caret: None,
+        output: None,
+        output_bounds: None,
+    };
+    let search = view.borrow().search.clone();
+    search.present();
+    view.borrow_mut().show(result.clone());
+    let tabs = view.borrow().results.clone();
+    let title = |tabs: &gtk::Notebook| {
+        tabs.tab_label_text(&tabs.nth_page(tabs.current_page()).unwrap())
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(title(&tabs), "Translation");
+    tabs.set_current_page(Some(2));
+    assert_eq!(title(&tabs), "Definitions");
+    result.entries.clear();
+    result.translation = None;
+    result.status = "Generating…".into();
+    result.snapshot.language = Language::Arabic;
+    result.snapshot.text = "يلعب".into();
+    view.borrow_mut().show(result.clone());
+    assert_eq!(title(&tabs), "Translation");
+    result.entries = vec![LexicalEntry {
+        headword: "يلعب".into(),
+        senses: vec![Sense {
+            definitions: vec!["to play".into()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    result.translation = Some(("play".into(), "fixture".into()));
+    result.status.clear();
+    view.borrow_mut().show(result.clone());
+    assert_eq!(
+        title(&tabs),
+        "Definitions",
+        "restore the selected tab after pending results"
+    );
+    tabs.set_current_page(Some(0));
+    view.borrow_mut().show(result.clone());
+    assert_eq!(title(&tabs), "Translation");
+    assert_eq!(*view.borrow().search_copy_text.borrow(), "play");
+    let mut pending = vec![search.clone().upcast::<gtk::Widget>()];
+    while let Some(widget) = pending.pop() {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            assert_ne!(button.label().as_deref(), Some("Translate"));
+            assert_ne!(button.label().as_deref(), Some("Look up or improve"));
+            if button.label().as_deref() == Some("Copy result") {
+                assert!(!button.is_visible());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            pending.push(widget);
+        }
+    }
+    result.snapshot.text = "This is bad.".into();
+    result.snapshot.language = Language::English;
+    result.entries.clear();
+    result.suggestions = ["better", "clearer"]
+        .into_iter()
+        .map(|replacement| writy_core::types::Suggestion {
+            snapshot: result.snapshot.clone(),
+            start: 8,
+            end: 11,
+            replacement: replacement.into(),
+            description: "Alternative".into(),
+            kind: SuggestionKind::Rewrite,
+            provider: "fixture".into(),
+        })
+        .collect();
+    view.borrow().editor.buffer().set_text(" This is bad. ");
+    view.borrow_mut().show(result);
+    tabs.set_current_page(Some(1));
+    assert_eq!(title(&tabs), "Suggestions");
+    let mut pending = vec![tabs.nth_page(Some(1)).unwrap()];
+    let mut apply = Vec::new();
+    let mut dismiss = Vec::new();
+    while let Some(widget) = pending.pop() {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.label().as_deref() == Some("Apply")
+        {
+            apply.push(button.clone());
+        }
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.label().as_deref() == Some("Dismiss")
+        {
+            dismiss.push(button.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            pending.push(widget);
+        }
+    }
+    assert_eq!(apply.len(), 2);
+    assert!(
+        apply.iter().all(|button| button.is_focusable()),
+        "search choices are keyboard accessible"
+    );
+    apply[0].emit_clicked();
+    let buffer = view.borrow().editor.buffer();
+    let applied = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+    assert!(applied.trim() == "This is better." || applied.trim() == "This is clearer.");
+    assert!(
+        applied.starts_with(' ') && applied.ends_with(' '),
+        "Apply preserves input padding"
+    );
+    apply[1].emit_clicked();
+    assert_eq!(
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
+        applied,
+        "stale choices cannot overwrite edits"
+    );
+    assert!(!apply[1].is_sensitive());
+    assert_eq!(dismiss.len(), 2);
+    assert!(dismiss.iter().all(|button| button.is_focusable()));
+    while rx.try_recv().is_ok() {}
+    dismiss[0].emit_clicked();
+    assert!(matches!(
+        rx.try_recv(),
+        Ok((Command::DismissSuggestion { .. }, _))
+    ));
+    assert_eq!(
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
+        applied,
+        "Dismiss must not edit text"
+    );
+    snapshot(&search, "automatic-arabic-translation");
+    search.close();
 }

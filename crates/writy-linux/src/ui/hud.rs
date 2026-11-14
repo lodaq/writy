@@ -21,6 +21,7 @@ struct Placement {
 }
 
 pub(super) struct HudStack {
+    tx: Commands,
     pub window: gtk::ApplicationWindow,
     pub tabs: gtk::Notebook,
     pub sections: BTreeMap<&'static str, HudSection>,
@@ -36,7 +37,7 @@ impl HudStack {
     pub fn new(app: &gtk::Application, tx: &Commands) -> Self {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title("Writy — Writing assistant")
+            .title("Writy — Text assistant")
             .default_width(440)
             .build();
         window.add_css_class("writy-hud");
@@ -59,9 +60,8 @@ impl HudStack {
         header.add_css_class("writy-hud-toolbar");
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         toolbar.add_css_class("writy-hud-header");
-        let title = label("Writing assistant", "writy-title");
+        let title = label("Text assistant", "writy-title");
         title.set_wrap(false);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title.set_hexpand(true);
         title.set_tooltip_text(Some("Drag the header to move this panel"));
         toolbar.append(&title);
@@ -250,6 +250,7 @@ impl HudStack {
         }
         install_drag(&header, &window, &expand, placement.clone());
         Self {
+            tx: tx.clone(),
             window,
             tabs,
             sections,
@@ -279,7 +280,6 @@ impl HudStack {
         monitor: Option<&gdk::Monitor>,
         bounds: gdk::Rectangle,
     ) {
-        let first_query = self.query_text.borrow().is_empty();
         for (key, section) in &self.sections {
             let panel = panels
                 .iter()
@@ -289,7 +289,16 @@ impl HudStack {
             section.card.set_visible(panel.is_some());
             if let Some(panel) = panel {
                 let rendered = (panel.groups.clone(), panel.body.clone());
-                if section.rendered.borrow().as_ref() != Some(&rendered) {
+                if *key == "suggestions" {
+                    section.source.set_visible(false);
+                    section.body.set_visible(false);
+                    while let Some(child) = section.responses.first_child() {
+                        section.responses.remove(&child);
+                    }
+                    section
+                        .responses
+                        .append(&components::improvements(result, &self.tx, None));
+                } else if section.rendered.borrow().as_ref() != Some(&rendered) {
                     components::response_rows(
                         &section.source,
                         &section.body,
@@ -310,11 +319,6 @@ impl HudStack {
         if !self.sections.values().any(|s| s.card.get_visible()) {
             self.window.set_visible(false);
             return;
-        }
-        let new_selection = result.snapshot.source == "selection"
-            && *self.query_text.borrow() != result.snapshot.text;
-        if (first_query || new_selection) && self.sections["translation"].scroll.get_visible() {
-            self.tabs.set_current_page(Some(0));
         }
         if self.tabs.current_page().is_none_or(|page| {
             self.tabs

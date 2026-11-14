@@ -1,6 +1,8 @@
 //! AT-SPI inspection and verified edits run on a dedicated worker.
 //! Text-bearing snapshots intentionally do not implement `Debug`.
 
+pub(crate) mod transport;
+
 use anyhow::{Result, anyhow, ensure};
 use gtk::glib::{ffi as glib_ffi, gobject_ffi};
 use std::{
@@ -14,10 +16,11 @@ use tokio::sync::oneshot;
 use writy_core::types::Suggestion;
 
 const MAX_FIELD_CHARACTERS: usize = 8192;
+const MAX_TREE_DEPTH: usize = 64;
 const OPERATION_LIMIT: Duration = Duration::from_millis(1500);
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -25,7 +28,7 @@ pub struct Rect {
     pub height: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FieldSnapshot {
     pub identity: String,
     pub text: String,
@@ -33,6 +36,7 @@ pub struct FieldSnapshot {
     pub rect: Option<Rect>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Observation {
     pub secure: bool,
     pub field: Option<FieldSnapshot>,
@@ -78,7 +82,12 @@ impl Accessibility {
             // observation instead of taking down the desktop application.
             let _ = std::thread::Builder::new()
                 .name("writy-accessibility".into())
-                .spawn(move || worker(receiver));
+                .spawn(move || {
+                    #[cfg(not(test))]
+                    transport::broker(receiver);
+                    #[cfg(test)]
+                    worker(receiver);
+                });
             sender
         });
         Self {
@@ -134,15 +143,36 @@ impl Accessibility {
     }
 }
 
+fn enable_desktop_accessibility() -> Result<()> {
+    use gtk::{gio, glib::variant::ToVariant};
+    let bus = gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>)?;
+    bus.call_sync(
+        Some("org.a11y.Bus"),
+        "/org/a11y/bus",
+        "org.freedesktop.DBus.Properties",
+        "Set",
+        Some(&("org.a11y.Status", "IsEnabled", true.to_variant()).to_variant()),
+        None,
+        gio::DBusCallFlags::NONE,
+        1500,
+        None::<&gio::Cancellable>,
+    )?;
+    Ok(())
+}
+
 fn worker(receiver: mpsc::Receiver<Request>) {
     // All AT-SPI objects, calls, and GLib event dispatch remain on this thread.
-    let context = unsafe { glib_ffi::g_main_context_new() };
+    let context = unsafe { glib_ffi::g_main_context_ref(glib_ffi::g_main_context_default()) };
     unsafe {
         glib_ffi::g_main_context_push_thread_default(context);
-        ffi::atspi_set_main_context(context);
         ffi::atspi_set_timeout(150, 150);
     }
+    let _ = enable_desktop_accessibility();
     let initialized = matches!(unsafe { ffi::atspi_init() }, 0 | 1);
+    // libatspi's context setter assumes that bus initialization succeeded.
+    if initialized {
+        unsafe { ffi::atspi_set_main_context(context) };
+    }
     loop {
         for _ in 0..32 {
             if unsafe { glib_ffi::g_main_context_iteration(context, 0) } == 0 {
@@ -300,9 +330,8 @@ fn find_focused(pid: u32, deadline: Instant) -> Result<Option<Object>> {
         if checked(|error| unsafe { ffi::atspi_accessible_get_process_id(app.ptr(), error) }).ok()
             == Some(pid)
         {
-            unsafe {
-                ffi::atspi_accessible_set_cache_mask(app.ptr(), 0);
-            }
+            // Keep AT-SPI's default cache: disabling state caching can deadlock
+            // libatspi's cache-population callback during a synchronous query.
             pending.push((app, 0));
         }
     }
@@ -319,12 +348,21 @@ fn find_focused(pid: u32, deadline: Instant) -> Result<Option<Object>> {
             continue;
         }
         node.refresh();
+        if depth == 1 {
+            // Chromium enables its web text tree when an assistive client requests frame attributes.
+            if let Ok(attributes) =
+                checked(|e| unsafe { ffi::atspi_accessible_get_attributes(node.ptr(), e) })
+                && !attributes.is_null()
+            {
+                unsafe { glib_ffi::g_hash_table_unref(attributes) };
+            }
+        }
         if node.has_state(ffi::STATE_FOCUSED)?
             && (node.is_secure()? || node.has_state(ffi::STATE_EDITABLE)?)
         {
             return Ok(Some(node));
         }
-        if depth >= 32 {
+        if depth >= MAX_TREE_DEPTH {
             continue;
         }
         let count =
@@ -578,11 +616,14 @@ mod ffi {
             error: *mut *mut glib_ffi::GError,
         ) -> c_uint;
         pub fn atspi_accessible_get_state_set(object: *mut c_void) -> *mut c_void;
-        pub fn atspi_accessible_set_cache_mask(object: *mut c_void, mask: c_uint);
         pub fn atspi_accessible_clear_cache_single(object: *mut c_void);
         pub fn atspi_state_set_contains(states: *mut c_void, state: c_uint) -> c_int;
         pub fn atspi_accessible_get_text_iface(object: *mut c_void) -> *mut c_void;
         pub fn atspi_accessible_get_editable_text_iface(object: *mut c_void) -> *mut c_void;
+        pub fn atspi_accessible_get_attributes(
+            object: *mut c_void,
+            error: *mut *mut glib_ffi::GError,
+        ) -> *mut glib_ffi::GHashTable;
         pub fn atspi_text_get_character_count(
             object: *mut c_void,
             error: *mut *mut glib_ffi::GError,
@@ -656,6 +697,46 @@ fn verified_replacement(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unavailable_accessibility_bus_does_not_abort() {
+        const CHILD: &str = "WRITY_TEST_DEAD_ACCESSIBILITY_BUS";
+        if std::env::var_os(CHILD).is_some() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let observation = runtime.block_on(Accessibility::start().inspect(1));
+            assert!(observation.field.is_none());
+            assert!(!observation.secure);
+            assert!(observation.status.contains("unavailable"));
+            return;
+        }
+        let missing = format!(
+            "unix:path=/tmp/writy-missing-a11y-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "accessibility::tests::unavailable_accessibility_bus_does_not_abort",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("AT_SPI_BUS_ADDRESS", &missing)
+            .env("DBUS_SESSION_BUS_ADDRESS", &missing)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Missing accessibility bus crashed the worker: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn field(identity: &str, text: &str, caret: usize) -> FieldSnapshot {
         FieldSnapshot {

@@ -2,6 +2,8 @@
 enabled = true
 offline = false
 selection_popup = true
+copy_popup = false
+typing_popup = true
 
 [typing]
 idle_ms = 300

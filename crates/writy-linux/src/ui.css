@@ -4,12 +4,12 @@ window.writy-main, window.writy-settings { background: @writy_bg; }
     font-family: system-ui, 'Noto Sans', 'Noto Sans Arabic', sans-serif;
     font-size: 1em;
 }
-window.writy-hud { background: transparent; }
+window.writy-hud { background: transparent; box-shadow: none; }
 .writy-card {
     background: @writy_surface;
     border: 1px solid alpha(@theme_fg_color, .12);
     border-radius: 14px;
-    padding: 8px 10px;
+    padding: 6px 10px;
 }
 .writy-hud .writy-card {
     padding: 5px 7px;
@@ -166,7 +166,7 @@ window.writy-hud { background: transparent; }
     color: alpha(@theme_fg_color, .7);
     margin-top: 5px;
 }
-.writy-result-section, .writy-hud-section { padding: 11px 12px 14px; }
+.writy-result-section, .writy-hud-section { padding: 7px 12px 9px; }
 .writy-result-section separator, .writy-hud-section separator {
     min-height: 1px;
     background: alpha(@theme_fg_color, .2);
@@ -195,7 +195,7 @@ window.writy-hud { background: transparent; }
 .writy-hud { font-size: .95em; }
 .writy-settings .writy-title { font-size: 1em; letter-spacing: 0; }
 .writy-settings .writy-section-title { font-size: 1.15em; letter-spacing: -.3px; }
-.writy-settings .writy-card { padding: 10px 12px; }
+.writy-settings .writy-card { padding: 7px 12px; }
 .writy-settings .writy-toolbar { padding: 4px 7px; }
 .writy-settings .writy-toolbar .writy-title { font-size: 1.1em; }
 .writy-settings entry {
@@ -258,8 +258,8 @@ window.writy-main { background: @writy_bg; }
 .writy-main .writy-toolbar {
     background: transparent;
     border: none;
-    min-height: 36px;
-    padding: 2px 7px;
+    min-height: 28px;
+    padding: 0 4px;
 }
 .writy-main .writy-header { font-size: 1.3em; letter-spacing: -.5px; }
 .writy-main .writy-search-header .writy-meta { font-size: 1em; }
@@ -327,7 +327,7 @@ window.writy-main { background: @writy_bg; }
 }
 .writy-main .writy-result-tabs > stack { border: none; background: transparent; }
 .writy-main .writy-result-section {
-    padding: 12px 19px 19px;
+    padding: 8px 16px 10px;
     background: transparent;
     border: none;
     border-radius: 0;
@@ -343,9 +343,9 @@ window.writy-main { background: @writy_bg; }
 }
 .writy-main .writy-source-group + .writy-source-group {
     border-top: 1px solid alpha(@theme_fg_color, .12);
-    padding-top: 20px;
+    padding-top: 10px;
 }
-.writy-main .writy-result-entry { padding: 2px 10px 8px 0; }
+.writy-main .writy-result-entry { padding: 1px 10px 3px 0; }
 .writy-main .writy-result-entry:last-child { padding-bottom: 4px; }
 .writy-main .writy-entry-headword {
     font-size: 1.1em;
@@ -362,3 +362,11 @@ window.writy-main { background: @writy_bg; }
     color: alpha(@theme_fg_color, .78);
 }
 .writy-rtl { letter-spacing: 0; }
+
+.writy-image-badge {
+    padding: 4px 8px;
+    margin: 2px;
+    border-radius: 6px;
+    background: alpha(@theme_fg_color, 0.08);
+    font-size: 14px;
+}

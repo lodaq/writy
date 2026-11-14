@@ -21,6 +21,7 @@ use writy_core::{config::Config, types::SuggestionKind};
 mod components;
 mod dictionaries;
 mod hud;
+mod image_input;
 mod settings;
 use components::{copy_button, empty_state, result_card, section};
 
@@ -52,6 +53,13 @@ fn align_label(label: &gtk::Label) {
         0x0600..=0x06ff | 0x0750..=0x077f | 0x08a0..=0x08ff |
         0xfb50..=0xfdff | 0xfe70..=0xfeff | 0x1ee00..=0x1eeff)
     });
+    let spacing = gtk::pango::AttrList::new();
+    spacing.insert(gtk::pango::AttrFloat::new_line_height(if arabic {
+        0.75
+    } else {
+        1.0
+    }));
+    label.set_attributes(Some(&spacing));
     label.set_xalign(0.);
     if arabic {
         label.add_css_class("writy-rtl");
@@ -68,14 +76,21 @@ fn align_label(label: &gtk::Label) {
 }
 fn clipboard(text: &str) {
     if let Some(display) = gdk::Display::default() {
-        display.clipboard().set_text(text);
+        let provider = gdk::ContentProvider::new_union(&[
+            gdk::ContentProvider::for_value(&text.to_value()),
+            gdk::ContentProvider::for_bytes(
+                "application/x-writy-result",
+                &glib::Bytes::from_static(b"1"),
+            ),
+        ]);
+        let _ = display.clipboard().set_content(Some(&provider));
     }
 }
 const CATEGORIES: [(&str, &str); 7] = [
     ("translation", "Translation"),
-    ("suggestions", "Writing"),
-    ("definition", "Definition"),
-    ("collocations", "Collocations"),
+    ("suggestions", "Suggestions"),
+    ("definition", "Definitions"),
+    ("collocations", "Common word combinations"),
     ("examples", "Examples"),
     ("synonyms", "Synonyms & antonyms"),
     ("word_family", "Word family"),
@@ -192,7 +207,6 @@ fn panels(result: &Results) -> Vec<Panel> {
             SuggestionKind::Rewrite => "Rewrite",
             SuggestionKind::Spelling => "Spelling",
             SuggestionKind::Grammar => "Grammar",
-            SuggestionKind::Completion => "Completion",
         };
         add(
             "suggestions",
@@ -213,15 +227,18 @@ fn panels(result: &Results) -> Vec<Panel> {
                 .iter()
                 .flat_map(|group| group.rows.iter().map(|row| row.text.clone()))
                 .collect();
-            let selected_translation =
-                key == "translation" && result.snapshot.source == "selection";
-            if rows.is_empty() && !result.writing && !selected_translation {
+            let translation = key == "translation";
+            if rows.is_empty() && !result.writing && !translation && key != "suggestions" {
                 return None;
             }
             let body = if rows.is_empty() {
-                if selected_translation {
+                if translation {
                     if result.status == "Generating…" {
-                        "Translating selected text…"
+                        if result.snapshot.source == "selection" {
+                            "Translating selected text…"
+                        } else {
+                            "Translating…"
+                        }
                     } else if !result.status.is_empty() {
                         &result.status
                     } else {
@@ -231,7 +248,7 @@ fn panels(result: &Results) -> Vec<Panel> {
                     if result.status == "Generating…" {
                         "Checking your wording…"
                     } else {
-                        "No writing suggestion"
+                        "No improvements found"
                     }
                 } else if result.status == "Generating…" {
                     "Generating details…"
@@ -240,7 +257,7 @@ fn panels(result: &Results) -> Vec<Panel> {
                 }
                 .into()
             } else {
-                rows.join("\n\n")
+                rows.join("\n")
             };
             let copy_text = match key {
                 "translation" => result
@@ -298,7 +315,7 @@ impl SourceGroup {
                             .unwrap_or_else(|| gtk::glib::markup_escape_text(&row.text).to_string())
                     })
                     .collect::<Vec<_>>()
-                    .join("\n\n"),
+                    .join("\n"),
             )
         } else {
             DisplayText::Plain(
@@ -306,7 +323,7 @@ impl SourceGroup {
                     .iter()
                     .map(|row| row.text.as_str())
                     .collect::<Vec<_>>()
-                    .join("\n\n"),
+                    .join("\n"),
             )
         }
     }
@@ -408,11 +425,11 @@ mod tests {
         };
         assert_eq!(
             group.body(),
-            DisplayText::Markup("<b>bold</b>\n\nx &lt; y &amp; z".into())
+            DisplayText::Markup("<b>bold</b>\nx &lt; y &amp; z".into())
         );
         let panel = Panel {
             category: "definition",
-            title: "Definition",
+            title: "Definitions",
             body: String::new(),
             groups: vec![],
             copy_text: String::new(),
@@ -457,8 +474,8 @@ mod tests {
         let pending = panels(&selected_sentence);
         assert_eq!(
             pending.len(),
-            1,
-            "A selected sentence must open Translation while the model works"
+            2,
+            "Translation and Suggestions remain available while the model works"
         );
         assert_eq!(pending[0].category, "translation");
         assert!(pending[0].copy_text.is_empty());
@@ -513,12 +530,16 @@ struct View {
     config: Config,
     search: gtk::ApplicationWindow,
     editor: gtk::TextView,
+    image_input: image_input::ImageInput,
     search_debounce: Rc<RefCell<Option<glib::SourceId>>>,
     results: gtk::Notebook,
+    selected_tab: Rc<RefCell<String>>,
+    tab_switch: glib::SignalHandlerId,
     tab_copy_texts: Rc<RefCell<Vec<String>>>,
     status: gtk::Label,
     activity: gtk::Spinner,
     copy: gtk::Button,
+    pause: gtk::Button,
     search_copy_text: Rc<RefCell<String>>,
     content: gtk::Stack,
     empty: gtk::Box,
@@ -542,96 +563,92 @@ impl View {
         let search = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Writy — English ↔ العربية")
+            .fullscreened(true)
             .default_width(1000)
             .default_height(760)
             .build();
         search.add_css_class("writy-main");
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        root.set_margin_top(14);
-        root.set_margin_bottom(29);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        root.set_margin_top(2);
+        root.set_margin_bottom(4);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         header.add_css_class("writy-search-header");
-        header.set_margin_bottom(5);
+        header.set_margin_bottom(0);
         let name = label("Writy", "writy-header");
         name.set_wrap(false);
         name.set_hexpand(true);
         header.append(&name);
-        let languages = label(
-            "English ↔ العربية  ·  Read, translate, write naturally",
-            "writy-meta",
-        );
-        languages.set_direction(gtk::TextDirection::Ltr);
-        languages.set_hexpand(true);
-        let header_details = gtk::Box::new(gtk::Orientation::Horizontal, 14);
-        header_details.set_hexpand(false);
-        header_details.append(&languages);
-        let toolbar = gtk::HeaderBar::new();
-        toolbar.add_css_class("writy-toolbar");
-        toolbar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+        let logo_bytes = glib::Bytes::from_static(include_bytes!("../assets/writy.svg"));
+        let logo = gdk::Texture::from_bytes(&logo_bytes).expect("valid bundled logo");
+        let image = gtk::Image::from_paintable(Some(&logo));
+        image.set_pixel_size(32);
+        header.prepend(&image);
+        let header_details = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let about = gtk::Button::from_icon_name("help-about-symbolic");
+        about.set_tooltip_text(Some("About Writy"));
+        about.update_property(&[gtk::accessible::Property::Label("About Writy")]);
+        let parent = search.clone();
+        about.connect_clicked(move |_| {
+            gtk::AboutDialog::builder()
+                .transient_for(&parent)
+                .modal(true)
+                .program_name("Writy")
+                .version(env!("CARGO_PKG_VERSION"))
+                .logo(&logo)
+                .comments("Read, translate, and write naturally in English and Arabic. Writy combines dictionaries, translation, and writing suggestions to help you understand text and express your ideas clearly.")
+                .license_type(gtk::License::MitX11)
+                .website("https://github.com/lodaq/writy")
+                .build()
+                .present();
+        });
+        header_details.append(&about);
         let settings = gtk::Button::from_icon_name("emblem-system-symbolic");
         settings.set_tooltip_text(Some("Settings"));
         settings.update_property(&[gtk::accessible::Property::Label("Settings")]);
         let stx = tx.clone();
         settings.connect_clicked(move |_| send(&stx, Command::Settings));
-        header_details.append(&gtk::Separator::new(gtk::Orientation::Vertical));
         header_details.append(&settings);
         header.append(&header_details);
-        search.set_titlebar(Some(&toolbar));
+        let close = gtk::Button::from_icon_name("window-close-symbolic");
+        close.set_tooltip_text(Some("Close"));
+        close.update_property(&[gtk::accessible::Property::Label("Close")]);
+        let window = search.clone();
+        close.connect_clicked(move |_| window.close());
+        header_details.append(&close);
+        search.set_decorated(false);
         root.append(&header);
         let editor = gtk::TextView::new();
+        let image_input = image_input::ImageInput::new(&editor);
         editor.set_wrap_mode(gtk::WrapMode::WordChar);
         editor.add_css_class("writy-query");
-        editor.set_top_margin(8);
-        editor.set_bottom_margin(8);
+        editor.set_top_margin(4);
+        editor.set_bottom_margin(4);
         let input_scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(100)
-            .max_content_height(180)
+            .vexpand(true)
             .child(&editor)
             .build();
         input_scroll.add_css_class("writy-input");
         editor.update_property(&[gtk::accessible::Property::Label("Word or sentence")]);
         let input = gtk::Box::new(gtk::Orientation::Vertical, 7);
-        input.append(&label("Word or sentence", "writy-title"));
         input.append(&input_scroll);
-        root.append(&input);
+        input.set_vexpand(true);
+        input.set_hexpand(true);
+        let split = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        split.set_homogeneous(true);
+        split.set_vexpand(true);
+        split.append(&input);
+        root.append(&split);
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         actions.add_css_class("writy-search-actions");
-        for (name, translate) in [("Look up or improve", false), ("Translate", true)] {
-            let b = components::action_button(name);
-            b.set_hexpand(true);
-            if !translate {
-                b.add_css_class("suggested-action");
-            }
-            b.set_sensitive(false);
-            let action = b.downgrade();
-            editor.buffer().connect_changed(move |buffer| {
-                if let Some(action) = action.upgrade() {
-                    action.set_sensitive(
-                        !buffer
-                            .text(&buffer.start_iter(), &buffer.end_iter(), false)
-                            .trim()
-                            .is_empty(),
-                    );
-                }
-            });
-            let buffer = editor.buffer();
-            let tx = tx.clone();
-            b.connect_clicked(move |_| {
-                let text = buffer
-                    .text(&buffer.start_iter(), &buffer.end_iter(), false)
-                    .to_string();
-                send(&tx, Command::Query { text, translate });
-            });
-            actions.append(&b);
-        }
         let search_copy_text = Rc::new(RefCell::new(String::new()));
         let copy = copy_button(search_copy_text.clone(), "Copy result");
         copy.set_halign(gtk::Align::Fill);
+        copy.set_visible(false);
         copy.set_sensitive(false);
         actions.append(&copy);
         let controls = gtk::Box::new(gtk::Orientation::Vertical, 5);
-        controls.set_margin_bottom(10);
+        controls.set_margin_bottom(2);
         controls.append(&actions);
         root.append(&controls);
         let status = label(
@@ -663,7 +680,12 @@ impl View {
         let texts = tab_copy_texts.clone();
         let active_text = search_copy_text.clone();
         let active_copy = copy.clone();
-        results.connect_switch_page(move |_, _, page| {
+        let selected_tab = Rc::new(RefCell::new("Translation".to_owned()));
+        let selected = selected_tab.clone();
+        let tab_switch = results.connect_switch_page(move |tabs, widget, page| {
+            if let Some(title) = tabs.tab_label_text(widget) {
+                *selected.borrow_mut() = title.to_string();
+            }
             let text = texts
                 .borrow()
                 .get(page as usize)
@@ -684,12 +706,10 @@ impl View {
         content.add_named(&empty, Some("empty"));
         content.add_named(&results, Some("results"));
         content.set_visible_child_name("empty");
-        root.append(&content);
-        root.append(&label(
-            "Enter copies the result · Shift+Enter adds a line · Esc closes",
-            "writy-meta",
-        ));
-        let column = components::ReadingColumn::new(root.upcast_ref(), &actions, &header);
+        content.set_hexpand(true);
+        split.append(&content);
+
+        let column = components::ReadingColumn::new(root.upcast_ref(), &actions, &header, &split);
         column.set_vexpand(true);
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -704,31 +724,6 @@ impl View {
             send(&txclose, Command::Dismiss);
             glib::Propagation::Stop
         });
-        let key = gtk::EventControllerKey::new();
-        let keytx = tx.clone();
-        let weak = search.downgrade();
-        let key_editor = editor.clone();
-        let key_copy = copy.clone();
-        key.connect_key_pressed(move |_, key, _, mods| {
-            if key == gdk::Key::Escape {
-                if let Some(w) = weak.upgrade() {
-                    w.set_visible(false);
-                }
-                send(&keytx, Command::Dismiss);
-                return glib::Propagation::Stop;
-            }
-            if key == gdk::Key::Return
-                && key_editor.has_focus()
-                && !mods.contains(gdk::ModifierType::SHIFT_MASK)
-            {
-                if key_copy.is_sensitive() {
-                    key_copy.emit_clicked();
-                }
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        search.add_controller(key);
         let debounce = Rc::new(RefCell::new(None::<glib::SourceId>));
         let search_debounce = debounce.clone();
         let qtx = tx.clone();
@@ -756,18 +751,25 @@ impl View {
             ));
         });
         let hud = hud::HudStack::new(app, &tx);
+        let pause = components::action_button("Pause automatic assistance");
+        let pause_tx = tx.clone();
+        pause.connect_clicked(move |_| send(&pause_tx, Command::Pause));
         Rc::new(RefCell::new(Self {
             app: app.clone(),
             tx,
             config,
             search,
             editor,
+            image_input,
             search_debounce,
             results,
+            selected_tab,
+            tab_switch,
             tab_copy_texts,
             status,
             activity,
             copy,
+            pause,
             search_copy_text,
             content,
             empty,
@@ -779,6 +781,7 @@ impl View {
         }))
     }
     fn open_search(&self, fallback: Option<String>) {
+        self.content.set_visible(true);
         let editor = self.editor.clone();
         let debounce = self.search_debounce.clone();
         let search = self.search.clone();
@@ -869,11 +872,8 @@ impl View {
     }
     fn show(&mut self, result: Results) {
         self.generation.shown(result.generation);
-        let selected_tab = self
-            .results
-            .current_page()
-            .and_then(|page| self.results.nth_page(Some(page)))
-            .and_then(|page| self.results.tab_label_text(&page));
+        let selected_tab = self.selected_tab.borrow().clone();
+        self.results.block_signal(&self.tab_switch);
         if let Ok(config) = Config::load() {
             self.config = config;
         }
@@ -965,7 +965,7 @@ impl View {
             })
             .map(|(x, y, width, height)| gdk::Rectangle::new(x, y, width, height))
             .unwrap_or(bounds);
-        if self.search.is_visible() {
+        if self.search.is_visible() || self.image_input.is_capturing() {
             self.hud.window.set_visible(false);
         } else {
             self.hud
@@ -978,12 +978,16 @@ impl View {
                 .push(panel.copy_text.clone());
             let page = gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Never)
-                .child(&result_card(panel))
+                .child(&if panel.category == "suggestions" {
+                    components::improvements(&result, &self.tx, Some(&self.editor))
+                } else {
+                    result_card(panel)
+                })
                 .build();
             page.set_overlay_scrolling(true);
             let tab = components::tab_label(panel.title);
             self.results.append_page(&page, Some(&tab));
-            if selected_tab.as_deref() == Some(panel.title) {
+            if selected_tab == panel.title {
                 selected_page = index as u32;
             }
         }
@@ -1047,11 +1051,12 @@ impl View {
                 .build();
             self.results
                 .append_page(&page, Some(&components::tab_label("Sources")));
-            if selected_tab.as_deref() == Some("Sources") {
+            if selected_tab == "Sources" {
                 selected_page = self.results.n_pages() - 1;
             }
         }
         self.results.set_current_page(Some(selected_page));
+        self.results.unblock_signal(&self.tab_switch);
         let text = self
             .tab_copy_texts
             .borrow()
@@ -1118,6 +1123,10 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                             .set_layer(if active { Layer::Top } else { Layer::Overlay });
                     }
                 }
+                UiEvent::Capture => {
+                    view.image_input
+                        .capture(&view.search, &view.hud.window, &view.tx, &view.status)
+                }
                 UiEvent::Search(query) => view.open_search(query),
                 UiEvent::Dismiss => {
                     for window in view.app.windows() {
@@ -1133,6 +1142,11 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                         view.show(*result);
                     }
                 }
+                UiEvent::Paused(paused) => view.pause.set_label(if paused {
+                    "Resume automatic assistance"
+                } else {
+                    "Pause automatic assistance"
+                }),
                 UiEvent::Notice(notice) => view.status.set_text(&notice),
                 UiEvent::Copy(text) => {
                     clipboard(&text);

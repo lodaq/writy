@@ -18,7 +18,7 @@ the primary writing value. This is a personal tool before it is a general produc
   Missing reading categories stay absent. In insert mode, enabled categories stay
   visible; missing lexical details may be filled by explicitly labeled AI content.
   Dictionary evidence takes precedence over generated content.
-- **Writing:** English spelling/grammar through Harper, basic word completion,
+- **Writing:** English spelling/grammar through Harper
   and model phrasing from a newly typed sentence buffer. Query after 300 ms idle
   and two words by default for rewriting. Insert-mode word details and sentence
   translation can start after a word has at least two characters. Arabic
@@ -47,9 +47,41 @@ the primary writing value. This is a personal tool before it is a general produc
   680 logical pixels; Expand uses the output height minus 48 pixels. All enabled
   sections remain reachable, including pending/unavailable categories. Clamp
   placement to the active output. Manual search takes focus; ambient HUDs do not.
-
+- **Automatic controls:** Selection, copy, and typing have independent saved
+  preferences. Selection and typing default on; copy defaults off. Temporary pause
+  preserves preferences and leaves manual tools available.
+- **Dismiss:** Hide a suggestion for unchanged text until the text changes or
+  the user leaves the field.
 
 ## Data and platform boundary
+
+### Image input
+
+Screenshot and pasted-image text extraction must run locally. Images must not
+be sent to a remote provider. Once extracted, text follows the existing privacy
+and provider settings. Extraction supports English, Arabic, and mixed-language
+images. Recognized text remains editable and triggers the normal lookup and
+translation flow without a separate review step.
+
+After a successful capture, the screenshot shortcut starts a new search with
+an empty input field and a loading badge. Canceling region selection preserves
+the existing input. Pasting
+an image into the input shows a loading badge at its insertion location, then
+replaces that badge with recognized text, adding the content to the current
+input and preserving surrounding words. Editing remains available during
+extraction; the result replaces its badge at the badge's current location.
+Deleting a badge discards its pending result. Failed extraction or an image
+without recognized text leaves an “Extraction failed” or “No text found” badge
+with Retry and Remove actions, preserving surrounding input.
+
+Region capture uses slurp for selection and grim for the screenshot rather than
+a custom selection overlay. Each pasted image has its own badge; extraction
+runs one image at a time in paste order. Lookup and translation use available
+text, ignoring pending and failed badges. Each successful extraction triggers
+the normal lookup update.
+
+The design is confirmed. Implementation and validation evidence are recorded in
+[verification](verification.md); these requirements do not guarantee OCR quality.
 
 The first dictionary path uses open Wiktionary/FreeDict data packs and imported
 StarDict data with local media. Keep dataset licenses and source metadata with

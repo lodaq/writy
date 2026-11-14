@@ -62,7 +62,6 @@ fn stardict_roundtrip_keeps_senses_and_synonym_aliases() {
     assert_eq!(found[0].headword, "Decision");
     assert!(found[0].senses[0].definitions[0].contains("a choice"));
     assert_eq!(db.lookup("كتاب").unwrap()[0].headword, "كِتَاب");
-    assert_eq!(db.complete("dec", 3).unwrap(), vec!["Decision"]);
 }
 
 #[test]
@@ -213,8 +212,6 @@ fn normalization_preserves_original_headwords_and_ignores_query_sql() {
         .unwrap();
     assert_eq!(db.lookup("ايمان").unwrap()[0].headword, "إِيمَان");
     assert!(db.lookup("' OR 1=1 --").unwrap().is_empty());
-    assert!(db.complete("%", 10).unwrap().is_empty());
-    assert!(db.complete("", 10).unwrap().is_empty());
 }
 
 #[cfg(unix)]
@@ -267,7 +264,6 @@ fn lookups_keep_committed_entries_available_during_a_reimport() {
         .execute_batch("BEGIN EXCLUSIVE; DELETE FROM lexical_entries;")
         .unwrap();
     assert_eq!(db.lookup("decision").unwrap().len(), 1);
-    assert_eq!(db.complete("dec", 3).unwrap(), vec!["decision"]);
     writer.execute_batch("ROLLBACK").unwrap();
     assert_eq!(db.lookup("decision").unwrap().len(), 1);
 }
@@ -306,7 +302,7 @@ fn lookup_keeps_multiple_sources_when_one_has_many_senses() {
 }
 
 #[test]
-fn disabled_sources_stay_installed_but_do_not_supply_results_or_completions() {
+fn disabled_sources_stay_installed_but_do_not_supply_results() {
     let dir = TempDir::new().unwrap();
     let ifo = stardict(dir.path(), &[("decision", "a choice")], &[], "m");
     let path = dir.path().join("dictionary.sqlite");
@@ -322,10 +318,8 @@ fn disabled_sources_stay_installed_but_do_not_supply_results_or_completions() {
     assert!(!db.source_states().unwrap()[0].enabled);
     assert_eq!(db.sources().unwrap()[0].1, 1);
     assert!(db.lookup("decision").unwrap().is_empty());
-    assert!(db.complete("dec", 3).unwrap().is_empty());
     db.set_source_enabled(&id, true).unwrap();
     assert_eq!(db.lookup("decision").unwrap().len(), 1);
-    assert_eq!(db.complete("dec", 3).unwrap(), vec!["decision"]);
 }
 
 #[test]

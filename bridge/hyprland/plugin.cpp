@@ -39,12 +39,11 @@ class Bridge {
             if (event.state != WL_POINTER_BUTTON_STATE_PRESSED) return;
             // HUD controls must survive their own press/release cycle. A click in
             // another surface still invalidates projected text before any edit.
-            const auto resource = g_pSeatManager->m_state.pointerFocus.lock();
-            const auto surface = resource ? Desktop::View::CWLSurface::fromResource(resource) : nullptr;
-            const auto view = surface ? surface->view() : nullptr;
-            const auto layer = view ? Desktop::View::CLayerSurface::fromView(view) : nullptr;
-            if (layer && layer->m_namespace == "writy") return;
+            if (overWrityPanel()) return;
             invalidate("pointer");
+        }));
+        listeners.push_back(Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent, Event::SCallbackInfo&) {
+            if (!overWrityPanel()) invalidate("scroll");
         }));
         listeners.push_back(Event::bus()->m_events.config.reloaded.listen([this] { invalidate("config"); reconcileDevices(); }));
         listeners.push_back(g_pSessionLockManager->m_events.lock.listen([this] { invalidate("session-lock"); }));
@@ -71,6 +70,13 @@ class Bridge {
     std::vector<CHyprSignalListener> listeners;
     std::unordered_map<IKeyboard*, Device> devices;
 
+    bool overWrityPanel() const {
+        const auto resource = g_pSeatManager->m_state.pointerFocus.lock();
+        const auto surface = resource ? Desktop::View::CWLSurface::fromResource(resource) : nullptr;
+        const auto view = surface ? surface->view() : nullptr;
+        const auto layer = view ? Desktop::View::CLayerSurface::fromView(view) : nullptr;
+        return layer && layer->m_namespace == "writy";
+    }
     void emit(Json message) {
         message["seq"] = ++seq;
         message["focus_epoch"] = focusEpoch;
@@ -79,7 +85,12 @@ class Bridge {
         if (!transport.enqueue(std::move(line))) capture = false;
         transport.flush();
     }
-    std::array<int,4> lastBounds{};
+    std::array<int,4> lastBounds{}, lastWindowBounds{};
+    std::array<int,4> windowBounds() const {
+        const auto window = Desktop::focusState()->window();
+        const auto box = window ? window->logicalBox() : std::nullopt;
+        return box ? std::array<int,4>{static_cast<int>(box->x), static_cast<int>(box->y), static_cast<int>(box->w), static_cast<int>(box->h)} : std::array<int,4>{};
+    }
     std::array<int,4> outputBounds() const {
         const auto window=Desktop::focusState()->window();
         const auto monitor=window ? window->m_monitor.lock() : nullptr;
@@ -87,6 +98,7 @@ class Bridge {
     }
     void focus() {
         lastBounds=outputBounds();
+        lastWindowBounds=windowBounds();
         const auto window = Desktop::focusState()->window();
         const auto monitor = window ? window->m_monitor.lock() : nullptr;
         emit({{"type", "focus"}, {"app_id", window ? window->metadata().appID() : ""},
@@ -166,7 +178,7 @@ class Bridge {
                     for (const auto& [_, device] : devices) { keymap(device); modifiers(device); }
                 }
             }
-            if (transport.connected() && outputBounds()!=lastBounds) focus();
+            if (transport.connected() && (outputBounds()!=lastBounds || windowBounds()!=lastWindowBounds)) invalidate("geometry");
             for (const auto& line : transport.readLines()) {
                 const auto message = Json::parse(line, nullptr, false);
                 if (!message.is_object() || message.value("type", "") != "capture" || !message.contains("enabled") ||

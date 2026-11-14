@@ -8,12 +8,18 @@ glib::wrapper! {
 }
 
 impl ReadingColumn {
-    pub fn new(child: &gtk::Widget, actions: &gtk::Box, header: &gtk::Box) -> Self {
+    pub fn new(
+        child: &gtk::Widget,
+        actions: &gtk::Box,
+        header: &gtk::Box,
+        split: &gtk::Box,
+    ) -> Self {
         use gtk::subclass::prelude::ObjectSubclassIsExt;
         let column: Self = glib::Object::new();
         column.imp().child.set(child.clone()).unwrap();
         column.imp().actions.set(actions.clone()).unwrap();
         column.imp().header.set(header.clone()).unwrap();
+        column.imp().split.set(split.clone()).unwrap();
         child.set_parent(&column);
         column
     }
@@ -29,12 +35,20 @@ mod reading_column {
         pub child: OnceCell<gtk::Widget>,
         pub actions: OnceCell<gtk::Box>,
         pub header: OnceCell<gtk::Box>,
+        pub split: OnceCell<gtk::Box>,
     }
     fn inset(width: i32) -> i32 {
-        (width / 24).clamp(12, 40)
+        (width / 60).clamp(8, 16)
     }
     impl ReadingColumn {
         fn arrange_actions(&self, width: i32) {
+            if let Some(split) = self.split.get() {
+                split.set_orientation(if width >= 1000 {
+                    gtk::Orientation::Horizontal
+                } else {
+                    gtk::Orientation::Vertical
+                });
+            }
             for row in [self.actions.get(), self.header.get()]
                 .into_iter()
                 .flatten()
@@ -113,20 +127,20 @@ mod reading_column {
 }
 
 pub(super) fn section(title: &str, description: &str) -> (gtk::Box, gtk::Box) {
-    let section = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let heading = label(title, "writy-title");
     heading.add_css_class("writy-section-title");
     section.append(&heading);
     if !description.is_empty() {
         section.append(&label(description, "writy-meta"));
     }
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 7);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     content.add_css_class("writy-card");
     section.append(&content);
     (section, content)
 }
 pub(super) fn empty_state(title: &str, detail: &str) -> gtk::Box {
-    let state = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let state = gtk::Box::new(gtk::Orientation::Vertical, 3);
     state.add_css_class("writy-empty");
     state.set_valign(gtk::Align::Center);
     state.set_vexpand(true);
@@ -211,7 +225,7 @@ pub(super) fn copy_button(text: Rc<RefCell<String>>, caption: &'static str) -> g
     button
 }
 pub(super) fn result_card(panel: &Panel) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 3);
     card.add_css_class("writy-card");
     card.add_css_class("writy-result-section");
     let header = gtk::FlowBox::new();
@@ -220,7 +234,7 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
     header.set_min_children_per_line(1);
     header.set_max_children_per_line(2);
     header.set_column_spacing(12);
-    header.set_row_spacing(8);
+    header.set_row_spacing(4);
     let title = label(panel.title, "writy-title");
     title.set_wrap_mode(gtk::pango::WrapMode::Word);
     title.set_hexpand(true);
@@ -248,15 +262,6 @@ pub(super) fn result_card(panel: &Panel) -> gtk::Box {
             let body = label(&text, "writy-body");
             body.set_selectable(true);
             body.set_focusable(false);
-            let spacing = gtk::pango::AttrList::new();
-            spacing.insert(gtk::pango::AttrFloat::new_line_height(
-                if body.direction() == gtk::TextDirection::Rtl {
-                    0.76
-                } else {
-                    1.4
-                },
-            ));
-            body.set_attributes(Some(&spacing));
             if let Some(markup) = markup {
                 body.set_markup(markup);
             }
@@ -409,4 +414,125 @@ fn group_body(body: &gtk::Label, group: &SourceGroup) {
             }
         }
     }
+}
+
+/// Search edits its own input; floating choices keep the verified external-edit path.
+pub(super) fn improvements(
+    result: &Results,
+    tx: &Commands,
+    editor: Option<&gtk::TextView>,
+) -> gtk::Box {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    if editor.is_some() {
+        card.add_css_class("writy-result-section");
+        card.append(&label("Suggestions", "writy-title"));
+    }
+    if result.suggestions.is_empty() {
+        card.append(&label(
+            if result.status == "Generating…" {
+                "Finding suggestions…"
+            } else {
+                "No suggestions found. Try another word or phrase."
+            },
+            "writy-meta",
+        ));
+    }
+    for suggestion in &result.suggestions {
+        let Some(replacement) = suggestion.replaced_text() else {
+            continue;
+        };
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        let text = label(&replacement, "writy-body");
+        text.set_selectable(true);
+        row.append(&text);
+        row.append(&label(
+            &format!("{} · {}", suggestion.description, suggestion.provider),
+            "writy-meta",
+        ));
+        let actions = gtk::FlowBox::new();
+        actions.set_halign(gtk::Align::Start);
+        actions.set_selection_mode(gtk::SelectionMode::None);
+        actions.set_min_children_per_line(1);
+        actions.set_max_children_per_line(3);
+        actions.set_column_spacing(5);
+        actions.set_row_spacing(4);
+        let apply = action_button("Apply");
+        apply.set_focusable(editor.is_some());
+        let source = suggestion.snapshot.text.clone();
+        if let Some(editor) = editor {
+            let editor = editor.clone();
+            let start = suggestion.start;
+            let end = suggestion.end;
+            let edit = suggestion.replacement.clone();
+            apply.connect_clicked(move |button| {
+                let buffer = editor.buffer();
+                let current = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+                if current.trim() == source {
+                    let offset = current.chars().count() - current.trim_start().chars().count();
+                    let mut begin = buffer.iter_at_offset((offset + start) as i32);
+                    let mut end = buffer.iter_at_offset((offset + end) as i32);
+                    buffer.begin_user_action();
+                    buffer.delete(&mut begin, &mut end);
+                    buffer.insert(&mut begin, &edit);
+                    buffer.end_user_action();
+                    editor.grab_focus();
+                } else {
+                    button.set_sensitive(false);
+                    button.set_tooltip_text(Some("Text changed; choose a current suggestion"));
+                }
+            });
+        } else {
+            apply.set_sensitive(
+                result.snapshot.confidence == writy_core::types::Confidence::Verified,
+            );
+            apply.set_tooltip_text(Some(
+                "Apply to the verified text in your editor; otherwise use Copy",
+            ));
+            let tx = tx.clone();
+            let generation = result.generation;
+            let suggestion = suggestion.clone();
+            apply.connect_clicked(move |_| {
+                send(
+                    &tx,
+                    Command::Apply {
+                        generation,
+                        suggestion: suggestion.clone(),
+                    },
+                )
+            });
+        }
+        actions.insert(&apply, -1);
+        actions.insert(
+            &copy_button(
+                Rc::new(RefCell::new(suggestion.replaced_text().unwrap_or_default())),
+                "Copy",
+            ),
+            -1,
+        );
+        let dismiss = action_button("Dismiss");
+        dismiss.set_focusable(editor.is_some());
+        let dismiss_tx = tx.clone();
+        let generation = result.generation;
+        let choice = suggestion.clone();
+        let dismissed_row = row.downgrade();
+        dismiss.connect_clicked(move |_| {
+            if let Some(row) = dismissed_row.upgrade() {
+                row.set_visible(false);
+            }
+            send(
+                &dismiss_tx,
+                Command::DismissSuggestion {
+                    generation,
+                    suggestion: choice.clone(),
+                },
+            );
+        });
+        actions.insert(&dismiss, -1);
+        for index in 0..3 {
+            actions.child_at_index(index).unwrap().set_focusable(false);
+        }
+        row.append(&actions);
+        card.append(&row);
+    }
+    card
 }

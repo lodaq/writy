@@ -3,8 +3,8 @@ use super::*;
 
 fn page(tabs: &gtk::Notebook, name: &str, title: &str, detail: &str) -> gtk::Box {
     let (section, content) = section(title, detail);
-    section.set_margin_top(14);
-    section.set_margin_bottom(14);
+    section.set_margin_top(10);
+    section.set_margin_bottom(10);
     section.set_margin_start(14);
     section.set_margin_end(14);
     let scroll = gtk::ScrolledWindow::builder()
@@ -65,30 +65,80 @@ impl View {
         title.set_wrap(false);
         toolbar.set_title_widget(Some(&title));
         window.set_titlebar(Some(&toolbar));
+        let loaded = Config::load().unwrap_or_else(|_| self.config.clone());
+        let automatic = page(
+            &pages,
+            "Automatic assistance",
+            "Automatic assistance",
+            "Choose when Writy opens automatically. Changes apply when you save.",
+        );
+        let (row, selection) = toggle_row(
+            "Show on selection",
+            "Open the Text assistant when you select text in another app.",
+            loaded.selection_popup,
+        );
+        automatic.append(&row);
+        let (row, copied) = toggle_row(
+            "Show on copy",
+            "Open the Text assistant when you copy text in another app.",
+            loaded.copy_popup,
+        );
+        automatic.append(&row);
+        let (row, typing) = toggle_row(
+            "Show while typing",
+            "Analyze newly typed text and open the Text assistant. Manual tools remain available when off.",
+            loaded.typing_popup,
+        );
+        automatic.append(&row);
+        automatic.append(&label(
+            "Typing pause before analysis (milliseconds)",
+            "writy-meta",
+        ));
+        let idle = gtk::SpinButton::with_range(50.0, 10000.0, 50.0);
+        idle.set_value(loaded.typing.idle_ms as f64);
+        idle.update_property(&[gtk::accessible::Property::Label(
+            "Typing pause before analysis (milliseconds)",
+        )]);
+        automatic.append(&idle);
+        automatic.append(&label(
+            "AI analysis waits for this pause and a final full stop. Local checks can run sooner.",
+            "writy-meta",
+        ));
+        automatic.append(&label(
+            "Allow assistance in this terminal",
+            "writy-preference-title",
+        ));
+        automatic.append(&label("Use writy prose from the target terminal or its shortcut to toggle temporary permission. Commands and hidden prompts cannot be identified reliably.", "writy-meta"));
+        automatic.append(&self.pause);
         let privacy = page(
             &pages,
-            "General",
-            "Privacy & lookup",
-            "Choose how Writy helps while you write.",
+            "Privacy",
+            "Privacy",
+            "Control online requests and excluded apps.",
         );
-        let loaded = Config::load().unwrap_or_else(|_| self.config.clone());
         let (row, offline) = toggle_row(
             "Offline only",
             "Prevent cloud requests. Local dictionaries and Ollama remain available.",
             loaded.offline,
         );
         privacy.append(&row);
-        let (row, selection) = toggle_row(
-            "Automatic selection lookup",
-            "Show a reference panel when you select text in another app.",
-            loaded.selection_popup,
-        );
-        privacy.append(&row);
-        privacy.append(&label("When configured, online help sends text automatically. Hidden secure fields in opaque apps may not be detected. Terminal capture requires prose mode.","writy-status"));
+        privacy.append(&label(
+            "Excluded apps (one app name or ID per line)",
+            "writy-meta",
+        ));
+        let excluded = gtk::TextView::new();
+        excluded.set_wrap_mode(gtk::WrapMode::WordChar);
+        excluded.set_size_request(-1, 90);
+        excluded
+            .buffer()
+            .set_text(&loaded.apps.blocklist.join("\n"));
+        excluded.update_property(&[gtk::accessible::Property::Label("Excluded apps")]);
+        privacy.append(&excluded);
+        privacy.append(&label("When configured, online help sends text automatically. Hidden secure fields in opaque apps may not be detected. Terminal assistance requires temporary permission.", "writy-status"));
         let models = page(
             &pages,
-            "Models",
-            "Language models",
+            "AI models",
+            "AI models",
             "Use installed Ollama models for writing and translation.",
         );
         let translation = page(
@@ -173,9 +223,9 @@ impl View {
         )]);
         translation.append(&region);
         translation.append(&label("Keys are saved as plain text in your private config file (owner read/write only). Keys in environment variables also select the official APIs; without a key, keyless translation is used. Click Save settings to apply; no restart needed. Apertium needs no key but currently has no English–Arabic pair.", "writy-meta"));
-        let advanced = gtk::Expander::new(Some("Cloud provider"));
-        advanced.set_label_widget(Some(&label("Cloud provider", "writy-meta")));
-        let cloud = gtk::Box::new(gtk::Orientation::Vertical, 7);
+        let advanced = gtk::Expander::new(Some("Cloud AI provider"));
+        advanced.set_label_widget(Some(&label("Cloud AI provider", "writy-meta")));
+        let cloud = gtk::Box::new(gtk::Orientation::Vertical, 4);
         cloud.set_margin_top(7);
         advanced.set_child(Some(&cloud));
         let fields = [
@@ -301,8 +351,8 @@ impl View {
         refresh.emit_clicked();
         let panel_options = page(
             &pages,
-            "Panels",
-            "Floating panels",
+            "Text assistant",
+            "Result sections",
             "Choose which details appear beside your writing.",
         );
         let toggles = gtk::Box::new(gtk::Orientation::Vertical, 1);
@@ -320,7 +370,7 @@ impl View {
             "Dictionary library",
             "Download, enable or remove dictionaries.",
         );
-        let catalogue = gtk::Box::new(gtk::Orientation::Vertical, 7);
+        let catalogue = gtk::Box::new(gtk::Orientation::Vertical, 4);
         dictionaries.append(&catalogue);
         super::dictionaries::populate(&catalogue, &self.tx, &message);
         super::dictionaries::watch_installs(&catalogue, &self.tx, &message);
@@ -340,6 +390,21 @@ impl View {
             let mut c = loaded.clone();
             c.offline = offline.is_active();
             c.selection_popup = selection.is_active();
+            c.copy_popup = copied.is_active();
+            c.typing_popup = typing.is_active();
+            c.typing.idle_ms = idle.value_as_int() as u64;
+            c.apps.blocklist = excluded
+                .buffer()
+                .text(
+                    &excluded.buffer().start_iter(),
+                    &excluded.buffer().end_iter(),
+                    false,
+                )
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
             c.model.ollama_url = entries[0].text().into();
             c.model.rewrite_model = entries[1].text().into();
             c.model.translation_model = entries[2].text().into();
@@ -357,7 +422,7 @@ impl View {
             match c.save() {
                 Ok(()) => {
                     send(&tx, Command::Reload);
-                    msg.set_text("Saved. Restart the daemon if selection watching changed.");
+                    msg.set_text("Saved. Settings applied; no restart needed.");
                 }
                 Err(e) => msg.set_text(&format!("Settings not saved: {e}")),
             }

@@ -4,27 +4,56 @@ use writy_core::types::{LexicalEntry, Suggestion, TextSnapshot};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
-    Search { text: Option<String> },
+    Capture,
+    Search {
+        text: Option<String>,
+    },
     Settings,
-    Lookup { text: String },
+    Lookup {
+        text: String,
+    },
     Accept,
+    Apply {
+        generation: u64,
+        suggestion: Suggestion,
+    },
+    DismissSuggestion {
+        generation: u64,
+        suggestion: Suggestion,
+    },
     Copy,
     Pause,
     Prose,
     Dismiss,
     Status,
-    HudInteraction { active: bool },
-    Offline { enabled: bool },
-    Query { text: String, translate: bool },
+    HudInteraction {
+        active: bool,
+    },
+    Offline {
+        enabled: bool,
+    },
+    Query {
+        text: String,
+        translate: bool,
+    },
     Reload,
-    Selection { text: Option<String> },
+    Selection {
+        text: Option<String>,
+    },
+    Clipboard {
+        text: Option<String>,
+    },
 }
 impl Command {
     pub fn validate(&self) -> Result<(), &'static str> {
         let input = match self {
+            Self::Apply { suggestion, .. } | Self::DismissSuggestion { suggestion, .. } => {
+                Some(&suggestion.snapshot.text)
+            }
             Self::Lookup { text }
             | Self::Query { text, .. }
             | Self::Selection { text: Some(text) }
+            | Self::Clipboard { text: Some(text) }
             | Self::Search { text: Some(text) } => Some(text),
             _ => None,
         };
@@ -109,6 +138,7 @@ pub struct Results {
     pub output: Option<String>,
 }
 pub enum UiEvent {
+    Capture,
     Clear {
         generation: u64,
         preserve_huds: bool,
@@ -119,6 +149,7 @@ pub enum UiEvent {
     Settings,
     Results(Box<Results>),
     Notice(String),
+    Paused(bool),
     Copy(String),
 }
 

@@ -107,6 +107,36 @@ pub fn ensure_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Read-only compositor queries share its Unix socket rather than spawning a process per hover tick.
+pub async fn compositor_query(request: &str) -> Result<Vec<u8>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")?;
+    anyhow::ensure!(
+        !signature.is_empty()
+            && signature
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+        "Invalid compositor instance"
+    );
+    let path = std::path::PathBuf::from(
+        std::env::var_os("XDG_RUNTIME_DIR").context("Missing runtime directory")?,
+    )
+    .join("hypr")
+    .join(signature)
+    .join(".socket.sock");
+    tokio::time::timeout(std::time::Duration::from_millis(150), async {
+        let mut socket = tokio::net::UnixStream::connect(path).await?;
+        socket.write_all(request.as_bytes()).await?;
+        socket.shutdown().await?;
+        let mut data = Vec::new();
+        socket.take(131073).read_to_end(&mut data).await?;
+        anyhow::ensure!(data.len() <= 131072, "Compositor response exceeds limit");
+        Ok(data)
+    })
+    .await
+    .context("Compositor query timed out")?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
