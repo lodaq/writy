@@ -199,3 +199,31 @@ mod tests {
         assert!(!stale.same_edit(&choice));
     }
 }
+
+/// A lexical word, including apostrophes, hyphens and Arabic combining marks.
+pub fn is_single_word(text: &str) -> bool {
+    let text = text.trim();
+    text.chars().any(char::is_alphabetic)
+        && text.chars().all(|c| c.is_alphabetic() || matches!(c, '\u{0300}'..='\u{036f}' | '\u{064b}'..='\u{065f}' | '\u{0670}' | '\u{06d6}'..='\u{06ed}' | '\'' | '’' | '-'))
+}
+
+#[cfg(test)]
+mod word_tests {
+    use super::is_single_word;
+    #[test]
+    fn accepts_words_only() {
+        for word in ["through", " don't ", "well-known", "لَعِبَ", "café"] {
+            assert!(is_single_word(word), "{word}");
+        }
+        for text in [
+            "",
+            "123",
+            "two words",
+            "hello!",
+            "one\ntwo",
+            "https://example.com",
+        ] {
+            assert!(!is_single_word(text), "{text}");
+        }
+    }
+}

@@ -95,7 +95,10 @@ Rebuild it after a Hyprland update. Begin bridge testing in a nested compositor;
 see [the bridge README](bridge/hyprland/README.md).
 
 Optional services: [Ollama](https://docs.ollama.com/) for local generation and
-`mpv` for dictionary audio. Models and dictionaries are installed separately;
+`mpv` for dictionary audio, plus `espeak-ng` (or `espeak`) for US/UK word
+pronunciation. Single-word results include Video, AI Insights, Images, Google,
+and Wikipedia actions. Search links open in your browser; Insights uses the
+configured model and respects offline mode. Models and dictionaries are installed separately;
 model quality and speed depend on the selected model and hardware.
 
 For a local development run, start

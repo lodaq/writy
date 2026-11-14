@@ -27,6 +27,7 @@ pub(super) struct HudStack {
     pub sections: BTreeMap<&'static str, HudSection>,
     pub expand: gtk::ToggleButton,
     query: gtk::Label,
+    word_actions: gtk::Box,
     status: gtk::Label,
     activity: gtk::Spinner,
     placement: Rc<Placement>,
@@ -92,6 +93,8 @@ impl HudStack {
         query.set_wrap(false);
         query.set_ellipsize(gtk::pango::EllipsizeMode::End);
         header.append(&query);
+        let word_actions = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        header.append(&word_actions);
         let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let activity = gtk::Spinner::new();
         status_row.append(&activity);
@@ -256,6 +259,7 @@ impl HudStack {
             sections,
             expand,
             query,
+            word_actions,
             status,
             activity,
             placement,
@@ -334,6 +338,7 @@ impl HudStack {
             self.query.set_text(&result.snapshot.text);
             *self.query_text.borrow_mut() = result.snapshot.text.clone();
         }
+        word_actions::update(&self.word_actions, Some(result), &self.tx);
         self.query.set_tooltip_text(Some(&result.snapshot.text));
         self.status.set_text(if !result.status.is_empty() {
             &result.status

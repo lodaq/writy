@@ -5,6 +5,9 @@ use writy_core::types::{LexicalEntry, Suggestion, TextSnapshot};
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
     Capture,
+    WordInsights {
+        generation: u64,
+    },
     Search {
         text: Option<String>,
     },

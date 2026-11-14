@@ -441,6 +441,12 @@ impl State {
             Command::HudInteraction { active } => { self.hud_interacting = active; },
             Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"paused":self.paused,"typing_popup":self.config.typing_popup,"selection_popup":self.config.selection_popup,"copy_popup":self.config.copy_popup,"offline":self.config.offline,"search_active":self.search,"hud_interacting":self.hud_interacting,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.config.typing_popup&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
             Command::Search{text}=>{let query=text.or_else(||self.generation.current.as_ref().map(|s|s.text.clone()));self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
+            Command::WordInsights { generation } => {
+                if generation != self.generation.id() || !self.generation.current.as_ref().is_some_and(|s| writy_core::types::is_single_word(&s.text)) { return "Word is stale or invalid".into(); }
+                self.generation.notice = "Generating…".into();
+                self.request(Capability::WritingAssistance, tx);
+                self.publish();
+            }
             Command::Capture=>{let _=self.ui.try_send(UiEvent::Capture);}
             Command::Settings=>{let _=self.ui.try_send(UiEvent::Settings);}
             Command::Lookup{text}=>{self.search=false;self.query(text,true,true,tx).await;}

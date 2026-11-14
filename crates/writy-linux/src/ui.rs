@@ -23,6 +23,7 @@ mod dictionaries;
 mod hud;
 mod image_input;
 mod settings;
+mod word_actions;
 use components::{copy_button, empty_state, result_card, section};
 
 const CSS: &str = include_str!("ui.css");
@@ -541,6 +542,7 @@ struct View {
     copy: gtk::Button,
     pause: gtk::Button,
     search_copy_text: Rc<RefCell<String>>,
+    word_actions: gtk::Box,
     content: gtk::Stack,
     empty: gtk::Box,
     hud: hud::HudStack,
@@ -650,6 +652,8 @@ impl View {
         let controls = gtk::Box::new(gtk::Orientation::Vertical, 5);
         controls.set_margin_bottom(2);
         controls.append(&actions);
+        let word_actions = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        controls.append(&word_actions);
         root.append(&controls);
         let status = label(
             "Type a word or sentence. Local dictionaries work without a network.",
@@ -771,6 +775,7 @@ impl View {
             copy,
             pause,
             search_copy_text,
+            word_actions,
             content,
             empty,
             hud,
@@ -865,6 +870,7 @@ impl View {
             )
         });
         self.hud.window.set_visible(false);
+        word_actions::update(&self.word_actions, None, &self.tx);
         self.tab_copy_texts.borrow_mut().clear();
         while self.results.n_pages() > 0 {
             self.results.remove_page(Some(0));
@@ -882,6 +888,7 @@ impl View {
             self.results.remove_page(Some(0));
         }
         self.status.set_text(&result.status);
+        word_actions::update(&self.word_actions, Some(&result), &self.tx);
         let generating = result.status == "Generating…";
         self.activity.set_visible(generating);
         self.activity.set_spinning(generating);
