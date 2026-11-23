@@ -69,7 +69,7 @@ commands can replace results; dismissal and security clearing still apply.
 Search categories are native keyboard-accessible tabs. Each populated category
 has its own scrollable page and copy action; the main Copy result action follows
 the selected tab. Source attribution and media live on a separate Sources tab.
-The selected category persists when asynchronous results update. Empty categories
+The selected category persists when asynchronous results update and across launches. Empty categories
 are omitted, and a nonempty input never uses the initial welcome prompt.
 Explicit search sessions survive ambient focus, capture and bridge resets;
 reopening the modal reruns a retained query if there is no new input to seed it.
@@ -97,7 +97,7 @@ scroll the results; larger system fonts can also scroll the whole form rather th
 clip controls or the footer. Arabic headwords lead each RTL entry, with sense
 numbers at the right and multiline details together underneath. Arramooz's
 empty formatting lines are removed for display and adjacent verb attributes
-share a compact line; copying retains the original dictionary text. Typing automatically translates between English and Arabic when dictionaries have no translation. Suggestions stays available for both words and phrases, with individually applicable corrections and alternatives. Search Apply replaces the input only if it still matches the suggestion source; floating Apply uses the verified external-edit path. The former top lookup and Copy result buttons are hidden; per-section and per-choice Copy actions remain. Translation remains available in either language, and the selected tab survives loading and language changes. Alt+G toggles the search window without pausing background assistance. Compact line spacing is shared across labels. Pango handles
+share a compact line; copying retains the original dictionary text. Typing automatically translates between English and Arabic when dictionaries have no translation. Suggestions stays available for both words and phrases, with individually applicable corrections and alternatives. Search Apply replaces the input only if it still matches the suggestion source; floating Apply uses the verified external-edit path. The former top lookup and Copy result buttons are hidden; per-section and per-choice Copy actions remain. Translation remains available in either language, and the selected tab survives loading, language changes and relaunches. Alt+G toggles the search window without pausing background assistance. Compact line spacing is shared across labels. Pango handles
 logical text alignment: adding right justification to an RTL label would mirror
 its paragraph a second time and misplace it.
 

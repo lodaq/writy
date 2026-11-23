@@ -338,6 +338,10 @@ impl State {
         let Some(snapshot) = self.generation.current.clone() else {
             return;
         };
+        if !self.config.can_generate(capability) {
+            self.publish();
+            return;
+        }
         let service = match ModelService::new(self.config.clone()) {
             Ok(s) => s,
             Err(_) => {
@@ -349,8 +353,10 @@ impl State {
         self.generation.model_revision = snapshot.revision;
         let generation = self.generation.id();
         let tx = tx.clone();
+        let can_improve = self.config.can_generate(Capability::Improve);
         self.generation.model = Some(tokio::spawn(async move {
-            let improve = capability == Capability::Translate && snapshot.source == "search";
+            let improve =
+                capability == Capability::Translate && snapshot.source == "search" && can_improve;
             let result = service.generate(snapshot.clone(), capability).await;
             let _ = tx.send(Event::Model(generation, capability, result)).await;
             if improve {
@@ -407,7 +413,7 @@ impl State {
             self.checker.send_replace(Some(snapshot.clone()));
         }
         self.generation.notice = if self.generation.entries.is_empty() {
-            "No local entry. Install dictionaries in Settings or use model translation.".into()
+            "No local entry. Install dictionaries in Settings.".into()
         } else {
             String::new()
         };
@@ -443,9 +449,8 @@ impl State {
             Command::Search{text}=>{let query=text.or_else(||self.generation.current.as_ref().map(|s|s.text.clone()));self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
             Command::WordInsights { generation } => {
                 if generation != self.generation.id() || !self.generation.current.as_ref().is_some_and(|s| writy_core::types::is_single_word(&s.text)) { return "Word is stale or invalid".into(); }
-                self.generation.notice = "Generating…".into();
+                if !self.config.can_generate(Capability::WritingAssistance) { return "AI insights are unavailable".into(); }
                 self.request(Capability::WritingAssistance, tx);
-                self.publish();
             }
             Command::Capture=>{let _=self.ui.try_send(UiEvent::Capture);}
             Command::Settings=>{let _=self.ui.try_send(UiEvent::Settings);}
@@ -816,7 +821,7 @@ async fn run(
                                     }
                                     Err(error)=>s.generation.notice=error.to_string(),
                                 },
-                                Capability::Translate=>{s.generation.translation=Some((result.text,result.provider)); if s.search {s.generation.notice="Generating…".into();} },
+                                Capability::Translate=>{s.generation.translation=Some((result.text,result.provider)); if s.search && s.config.can_generate(Capability::Improve) {s.generation.notice="Generating…".into();} },
                                 Capability::Improve=>match ImprovementFeedback::parse(&result.snapshot.text, &result.text) {
                                     Ok(feedback)=>for suggestion in feedback.into_suggestions(&result.snapshot, &result.provider) {
                                         if !s.generation.suggestions.iter().any(|old|old.same_edit(&suggestion)) {s.generation.suggestions.push(suggestion);}
@@ -842,7 +847,7 @@ async fn run(
                     s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.generation.add_synonyms();s.checker.send_replace(Some(current.clone()));
                     s.publish();
                 }
-                if s.generation.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
+                if s.config.can_generate(Capability::WritingAssistance) && s.generation.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
             }
         }
     }
@@ -980,7 +985,13 @@ mod tests {
     use crate::ui::DisplayGeneration;
     fn test_state(ui: SyncSender<UiEvent>, generation: Arc<AtomicU64>) -> State {
         State {
-            config: Config::default(),
+            config: Config {
+                model: writy_core::config::Models {
+                    local_enabled: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             paused: false,
             field_context: None,
             context_version: 0,

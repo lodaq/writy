@@ -1,7 +1,12 @@
 //! Word-only shortcuts shared by search and the floating panel.
 use super::*;
 
-pub(super) fn update(container: &gtk::Box, result: Option<&Results>, tx: &Commands) {
+pub(super) fn update(
+    container: &gtk::Box,
+    result: Option<&Results>,
+    tx: &Commands,
+    insights_enabled: bool,
+) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
     }
@@ -57,14 +62,16 @@ pub(super) fn update(container: &gtk::Box, result: Option<&Results>, tx: &Comman
     let video = link("Video", "View videos containing this word", &video_url);
     video.add_css_class("writy-word-video");
     row.append(&video);
-    let insights = components::action_button("Insights");
-    insights.add_css_class("writy-word-insights");
-    insights.set_tooltip_text(Some("AI insights explain this word with definitions, examples and common combinations in the result tabs"));
-    insights.set_sensitive(result.status != "Generating…");
-    let tx = tx.clone();
-    let generation = result.generation;
-    insights.connect_clicked(move |_| send(&tx, Command::WordInsights { generation }));
-    row.append(&insights);
+    if insights_enabled {
+        let insights = components::action_button("Insights");
+        insights.add_css_class("writy-word-insights");
+        insights.set_tooltip_text(Some("AI insights explain this word with definitions, examples and common combinations in the result tabs"));
+        insights.set_sensitive(result.status != "Generating…");
+        let tx = tx.clone();
+        let generation = result.generation;
+        insights.connect_clicked(move |_| send(&tx, Command::WordInsights { generation }));
+        row.append(&insights);
+    }
     container.append(&row);
     let searches = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     for (caption, tooltip, url) in [

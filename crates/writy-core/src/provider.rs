@@ -9,6 +9,27 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 1_048_576;
 const BING_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 
+impl Config {
+    fn uses_translation_engine(&self, capability: Capability) -> bool {
+        !self.offline
+            && capability == Capability::Translate
+            && self.model.translation_engine != TranslationEngine::Model
+    }
+
+    fn uses_cloud_model(&self, capability: Capability) -> bool {
+        !self.uses_translation_engine(capability)
+            && !self.offline
+            && self.model.cloud_enabled
+            && !self.model.cloud_url.is_empty()
+    }
+
+    pub fn can_generate(&self, capability: Capability) -> bool {
+        self.model.local_enabled
+            || self.uses_translation_engine(capability)
+            || self.uses_cloud_model(capability)
+    }
+}
+
 #[derive(Clone)]
 pub struct ModelService {
     config: Config,
@@ -17,8 +38,10 @@ pub struct ModelService {
 impl ModelService {
     pub fn new(config: Config) -> Result<Self> {
         config.validate()?;
-        validate_endpoint(&config.model.ollama_url, false)?;
-        if !config.model.cloud_url.is_empty() {
+        if config.model.local_enabled {
+            validate_endpoint(&config.model.ollama_url, false)?;
+        }
+        if config.model.cloud_enabled && !config.model.cloud_url.is_empty() {
             validate_endpoint(&config.model.cloud_url, true)?;
         }
         for model in [
@@ -51,10 +74,7 @@ impl ModelService {
         );
         let mut online_error = None;
         let engine = self.config.model.translation_engine;
-        if !self.config.offline
-            && capability == Capability::Translate
-            && engine != TranslationEngine::Model
-        {
+        if self.config.uses_translation_engine(capability) {
             match self.translate_online(&snapshot).await {
                 Ok(text) => {
                     return Ok(ProviderResult {
@@ -67,7 +87,7 @@ impl ModelService {
                 }
                 Err(error) => online_error = Some(format!("{}: {error:#}", engine.name())),
             }
-        } else if !self.config.offline && !self.config.model.cloud_url.is_empty() {
+        } else if self.config.uses_cloud_model(capability) {
             match self.cloud(&snapshot, capability).await {
                 Ok(text) => {
                     let provider = format!("Cloud · {} · generated", self.config.model.cloud_model);
@@ -81,6 +101,14 @@ impl ModelService {
                 }
                 Err(error) => online_error = Some(format!("{error:#}")),
             }
+        }
+        if !self.config.model.local_enabled {
+            bail!(
+                "{}",
+                online_error
+                    .as_deref()
+                    .unwrap_or("No AI provider is enabled")
+            );
         }
         match self.local(&snapshot, capability).await {
             Ok(text) => {

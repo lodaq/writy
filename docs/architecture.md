@@ -81,8 +81,12 @@ between the final read and write remains a limitation to test in the trial.
 
 The seven independently configurable categories share one layer-shell reading
 surface. A persistent tab strip selects independently scrolling pages inside a
-fixed viewport. Shift + scroll cycles through enabled pages. The default window
-uses 72% of output height, capped at 680 logical pixels; fullscreen uses the entire
+fixed viewport. Shift + scroll cycles through enabled pages. Both windows
+reopen on the tab last activated by the user; automated fallbacks away from
+hidden sections are not remembered. The choice lives in
+`~/.local/state/writy/ui.toml` (or `$XDG_STATE_HOME/writy/ui.toml`), so tab
+changes never rewrite application settings or credentials. The default window uses
+72% of output height, capped at 680 logical pixels; fullscreen uses the entire
 output. Header dragging stores a session position, clamped to the current output,
 and fullscreen restore retains that position. The shared toolbar, tabs and footer
 stay outside each page's scroll area. Use native GTK text/image widgets

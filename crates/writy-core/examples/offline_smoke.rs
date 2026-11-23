@@ -11,6 +11,10 @@ use writy_core::{
 async fn main() -> Result<()> {
     let config = Config {
         offline: true,
+        model: writy_core::config::Models {
+            local_enabled: true,
+            ..Default::default()
+        },
         ..Config::default()
     };
     let service = ModelService::new(config)?;

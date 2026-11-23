@@ -24,6 +24,8 @@ pub struct Typing {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Models {
+    pub local_enabled: bool,
+    pub cloud_enabled: bool,
     pub ollama_url: String,
     pub rewrite_model: String,
     pub translation_model: String,
@@ -84,6 +86,8 @@ impl Default for Typing {
 impl Default for Models {
     fn default() -> Self {
         Self {
+            local_enabled: false,
+            cloud_enabled: false,
             ollama_url: "http://127.0.0.1:11434".into(),
             rewrite_model: "gemma3:4b".into(),
             translation_model: "translategemma:4b".into(),
@@ -237,7 +241,7 @@ pub fn config_dir() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share").join("writy")
 }
-fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
+pub(crate) fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
     std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback)
     })

@@ -102,6 +102,7 @@ impl Server {
             offline: true,
             ..Config::default()
         };
+        c.model.local_enabled = true;
         c.model.ollama_url = self.url.clone();
         c.model.translation_model = "qwen3:4b".into();
         c.model.rewrite_model = "qwen3:4b".into();
@@ -120,6 +121,54 @@ fn snapshot() -> TextSnapshot {
 }
 fn complete() -> String {
     "{\"message\":{\"content\":\"جملة قصيرة\"},\"done\":false}\n{\"message\":{\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\"}\n".into()
+}
+
+#[tokio::test]
+async fn configured_providers_are_disabled_until_enabled_individually() {
+    let server = Server::start(complete(), false).await;
+    let mut config: Config = toml::from_str(
+        r#"[model]
+cloud_url = "https://example.invalid/v1"
+cloud_model = "synthetic"
+api_key_env = "WRITY_TEST_MISSING_SECRET_6f2b0e17"
+"#,
+    )
+    .unwrap();
+    config.model.ollama_url = server.url.clone();
+    config.model.rewrite_model = "qwen3:4b".into();
+
+    let error = ModelService::new(config.clone())
+        .unwrap()
+        .generate(snapshot(), Capability::Rewrite)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "No AI provider is enabled");
+    assert!(server.requests.lock().unwrap().is_empty());
+
+    config.model.cloud_enabled = true;
+    let error = ModelService::new(config.clone())
+        .unwrap()
+        .generate(snapshot(), Capability::Rewrite)
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("API key environment variable is missing")
+    );
+    assert!(server.requests.lock().unwrap().is_empty());
+
+    config.model.cloud_enabled = false;
+    config.model.local_enabled = true;
+    let result = ModelService::new(config)
+        .unwrap()
+        .generate(snapshot(), Capability::Rewrite)
+        .await
+        .unwrap();
+    assert!(result.provider.starts_with("Ollama"));
+    assert!(result.notice.is_none());
 }
 
 #[tokio::test]
@@ -175,6 +224,7 @@ async fn missing_cloud_auth_is_reported_when_local_fallback_also_fails() {
     let server = Server::start(complete(), true).await;
     let mut config = server.config();
     config.offline = false;
+    config.model.cloud_enabled = true;
     config.model.cloud_url = "https://example.invalid/v1".into();
     config.model.cloud_model = "synthetic-cloud-model".into();
     config.model.api_key_env = format!(
@@ -195,6 +245,7 @@ async fn successful_fallback_keeps_cloud_failure_notice() {
     let server = Server::start(complete(), false).await;
     let mut config = server.config();
     config.offline = false;
+    config.model.cloud_enabled = true;
     config.model.cloud_url = "https://example.invalid/v1".into();
     config.model.cloud_model = "synthetic".into();
     config.model.api_key_env = "WRITY_TEST_MISSING_SECRET_6f2b0e17".into();

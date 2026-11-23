@@ -223,11 +223,29 @@ impl View {
         )]);
         translation.append(&region);
         translation.append(&label("Keys are saved as plain text in your private config file (owner read/write only). Keys in environment variables also select the official APIs; without a key, keyless translation is used. Click Save settings to apply; no restart needed. Apertium needs no key but currently has no English–Arabic pair.", "writy-meta"));
-        let advanced = gtk::Expander::new(Some("Cloud AI provider"));
-        advanced.set_label_widget(Some(&label("Cloud AI provider", "writy-meta")));
+        let (local_row, local_enabled) = toggle_row(
+            "Local AI provider",
+            "Use models installed in Ollama.",
+            loaded.model.local_enabled,
+        );
+        let (cloud_row, cloud_enabled) = toggle_row(
+            "Cloud AI provider",
+            "Send text to the configured cloud model when Offline mode is off.",
+            loaded.model.cloud_enabled,
+        );
+        let local = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let cloud = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        cloud.set_margin_top(7);
-        advanced.set_child(Some(&cloud));
+        for (row, toggle, fields) in [
+            (&local_row, &local_enabled, &local),
+            (&cloud_row, &cloud_enabled, &cloud),
+        ] {
+            models.append(row);
+            models.append(fields);
+            toggle
+                .bind_property("active", fields, "visible")
+                .sync_create()
+                .build();
+        }
         let fields = [
             ("Ollama URL", loaded.model.ollama_url.clone()),
             (
@@ -254,7 +272,7 @@ impl View {
             let field = gtk::Box::new(gtk::Orientation::Vertical, 4);
             field.append(&label(title, "writy-meta"));
             if index < 3 {
-                models.append(&field);
+                local.append(&field);
             } else {
                 cloud.append(&field);
             }
@@ -287,12 +305,15 @@ impl View {
         }
         let refresh = components::action_button("Refresh installed Ollama models");
         let model_status = label("", "writy-status");
-        models.append(&refresh);
-        models.append(&model_status);
-        models.append(&label("All installed tags are listed. Some models are for embeddings, OCR or cloud use rather than writing. Offline mode still blocks cloud-backed models.", "writy-status"));
-        models.append(&advanced);
+        local.append(&refresh);
+        local.append(&model_status);
+        local.append(&label("All installed tags are listed. Some models are for embeddings, OCR or cloud use rather than writing. Offline mode still blocks cloud-backed models.", "writy-status"));
         let url = entries[0].clone();
+        let local_toggle = local_enabled.clone();
         refresh.connect_clicked(move |button| {
+            if !local_toggle.is_active() {
+                return;
+            }
             button.set_sensitive(false);
             model_status.set_text("Loading installed models…");
             let url = url.text().to_string();
@@ -348,7 +369,9 @@ impl View {
                 glib::ControlFlow::Break
             });
         });
-        refresh.emit_clicked();
+        if loaded.model.local_enabled {
+            refresh.emit_clicked();
+        }
         let panel_options = page(
             &pages,
             "Text assistant",
@@ -405,6 +428,8 @@ impl View {
                 .filter(|line| !line.is_empty())
                 .map(str::to_owned)
                 .collect();
+            c.model.local_enabled = local_enabled.is_active();
+            c.model.cloud_enabled = cloud_enabled.is_active();
             c.model.ollama_url = entries[0].text().into();
             c.model.rewrite_model = entries[1].text().into();
             c.model.translation_model = entries[2].text().into();

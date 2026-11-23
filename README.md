@@ -23,7 +23,7 @@ The HUD can switch between compact and fullscreen views. Panel content scrolls i
 ## Intended workflow
 
 - **Read:** Select English or Arabic text for a dictionary entry or sentence
-  translation; use `Alt+G` to open or close the focused lookup window. Search translates automatically between English and Arabic as you type, keeps Translation available in either language, and preserves your selected tab.
+  translation; use `Alt+G` to open or close the focused lookup window. Search translates automatically between English and Arabic as you type, keeps Translation available in either language, and reopens on the tab you last activated.
 - **Write:** Keep every enabled HUD section available while typing. Local word lookup appears
   first; labeled AI details and translation follow after a sentence ends with a dot (`.`). English
   corrections run locally, and phrasing starts at two words by default. Existing text is not reconstructed after
@@ -216,8 +216,9 @@ are examples to merge into your configuration, not an installer that rewrites it
 
 Configuration is read from `$XDG_CONFIG_HOME/writy/config.toml`, defaulting to
 `~/.config/writy/config.toml`. Start with [the example](packaging/config.toml).
-Settings loads searchable lists from Ollama automatically; Refresh reloads the
-list from the entered Ollama URL. Choose models, then Save settings. The writing
+Local AI provider and Cloud AI provider are both off by default. Enable them
+independently under Settings → AI models, then save. With Local AI enabled,
+Refresh loads the searchable model list from the entered Ollama URL. The writing
 selector covers rewriting, word details and live translation; the other selector
 covers selection/search translation. Configured selections remain available if
 temporarily absent from the server.

@@ -10,6 +10,10 @@ use writy_core::{
 async fn main() -> Result<()> {
     let service = ModelService::new(Config {
         offline: true,
+        model: writy_core::config::Models {
+            local_enabled: true,
+            ..Default::default()
+        },
         ..Config::default()
     })?;
     let snapshot = TextSnapshot {

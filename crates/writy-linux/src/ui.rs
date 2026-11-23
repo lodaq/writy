@@ -16,7 +16,7 @@ use std::{
     },
     time::Duration,
 };
-use writy_core::{config::Config, types::SuggestionKind};
+use writy_core::{config::Config, state::UiState, types::SuggestionKind};
 
 mod components;
 mod dictionaries;
@@ -96,6 +96,17 @@ const CATEGORIES: [(&str, &str); 7] = [
     ("synonyms", "Synonyms & antonyms"),
     ("word_family", "Word family"),
 ];
+/// Remember tabs by category key so their labels can change freely.
+fn category_key(title: &str) -> Option<&'static str> {
+    if title == "Sources" {
+        // The only result tab without a dictionary category.
+        return Some("sources");
+    }
+    CATEGORIES
+        .iter()
+        .find(|(_, name)| *name == title)
+        .map(|(key, _)| *key)
+}
 #[derive(Clone, Debug, PartialEq)]
 struct ResultRow {
     headword: String,
@@ -552,7 +563,12 @@ struct View {
     layout_bounds: Option<(i32, i32, i32, i32)>,
 }
 impl View {
-    fn new(app: &gtk::Application, tx: Commands, config: Config) -> Rc<RefCell<Self>> {
+    fn new(
+        app: &gtk::Application,
+        tx: Commands,
+        config: Config,
+        state: UiState,
+    ) -> Rc<RefCell<Self>> {
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         if let Some(display) = gdk::Display::default() {
@@ -684,11 +700,21 @@ impl View {
         let texts = tab_copy_texts.clone();
         let active_text = search_copy_text.clone();
         let active_copy = copy.clone();
-        let selected_tab = Rc::new(RefCell::new("Translation".to_owned()));
+        let state = Rc::new(RefCell::new(state));
+        let selected_tab = Rc::new(RefCell::new(state.borrow().search_tab.clone()));
         let selected = selected_tab.clone();
+        let tab_state = state.clone();
         let tab_switch = results.connect_switch_page(move |tabs, widget, page| {
-            if let Some(title) = tabs.tab_label_text(widget) {
-                *selected.borrow_mut() = title.to_string();
+            if let Some(title) = tabs.tab_label_text(widget)
+                && let Some(key) = category_key(&title)
+            {
+                *selected.borrow_mut() = key.to_owned();
+                let mut state = tab_state.borrow_mut();
+                if state.search_tab != key {
+                    state.search_tab = key.to_owned();
+                    // A tab preference must never interrupt switching.
+                    let _ = state.save();
+                }
             }
             let text = texts
                 .borrow()
@@ -754,7 +780,7 @@ impl View {
                 },
             ));
         });
-        let hud = hud::HudStack::new(app, &tx);
+        let hud = hud::HudStack::new(app, &tx, state);
         let pause = components::action_button("Pause automatic assistance");
         let pause_tx = tx.clone();
         pause.connect_clicked(move |_| send(&pause_tx, Command::Pause));
@@ -870,11 +896,15 @@ impl View {
             )
         });
         self.hud.window.set_visible(false);
-        word_actions::update(&self.word_actions, None, &self.tx);
+        word_actions::update(&self.word_actions, None, &self.tx, false);
         self.tab_copy_texts.borrow_mut().clear();
+        // Removing the current page makes GTK select a neighbour, which would
+        // otherwise be remembered as an activation and usually ends on Sources.
+        self.results.block_signal(&self.tab_switch);
         while self.results.n_pages() > 0 {
             self.results.remove_page(Some(0));
         }
+        self.results.unblock_signal(&self.tab_switch);
     }
     fn show(&mut self, result: Results) {
         self.generation.shown(result.generation);
@@ -888,7 +918,13 @@ impl View {
             self.results.remove_page(Some(0));
         }
         self.status.set_text(&result.status);
-        word_actions::update(&self.word_actions, Some(&result), &self.tx);
+        word_actions::update(
+            &self.word_actions,
+            Some(&result),
+            &self.tx,
+            self.config
+                .can_generate(writy_core::types::Capability::WritingAssistance),
+        );
         let generating = result.status == "Generating…";
         self.activity.set_visible(generating);
         self.activity.set_spinning(generating);
@@ -994,7 +1030,7 @@ impl View {
             page.set_overlay_scrolling(true);
             let tab = components::tab_label(panel.title);
             self.results.append_page(&page, Some(&tab));
-            if selected_tab == panel.title {
+            if selected_tab == panel.category {
                 selected_page = index as u32;
             }
         }
@@ -1058,7 +1094,7 @@ impl View {
                 .build();
             self.results
                 .append_page(&page, Some(&components::tab_label("Sources")));
-            if selected_tab == "Sources" {
+            if selected_tab == "sources" {
                 selected_page = self.results.n_pages() - 1;
             }
         }
@@ -1084,7 +1120,7 @@ pub fn run(config: Config) -> glib::ExitCode {
         let (tx, rx) = std::sync::mpsc::sync_channel(128);
         let generation = Arc::new(AtomicU64::new(0));
         let commands = crate::backend::start(config.clone(), tx, generation.clone());
-        let view = View::new(app, commands, config.clone());
+        let view = View::new(app, commands, config.clone(), UiState::load());
         attach(view, rx, generation);
     });
     app.run_with_args::<&str>(&[])

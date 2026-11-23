@@ -20,6 +20,14 @@ struct Placement {
     pending_drag: Cell<Option<(i32, i32)>>,
 }
 
+/// Clears the tab-restore guard even if `update` returns early.
+struct QuietTabs<'a>(&'a Cell<bool>);
+impl Drop for QuietTabs<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
 pub(super) struct HudStack {
     tx: Commands,
     pub window: gtk::ApplicationWindow,
@@ -32,10 +40,11 @@ pub(super) struct HudStack {
     activity: gtk::Spinner,
     placement: Rc<Placement>,
     query_text: RefCell<String>,
+    quiet_tabs: Rc<Cell<bool>>,
 }
 
 impl HudStack {
-    pub fn new(app: &gtk::Application, tx: &Commands) -> Self {
+    pub fn new(app: &gtk::Application, tx: &Commands, state: Rc<RefCell<UiState>>) -> Self {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Writy — Text assistant")
@@ -161,6 +170,27 @@ impl HudStack {
             );
         }
         components::enable_wheel_tab_switching(&tabs);
+        let saved = state.borrow().hud_tab.clone();
+        if let Some(page) = CATEGORIES.iter().position(|(key, _)| *key == saved) {
+            tabs.set_current_page(Some(page as u32));
+        }
+        let quiet_tabs = Rc::new(Cell::new(false));
+        let quiet = quiet_tabs.clone();
+        tabs.connect_switch_page(move |_, _, page| {
+            // Automatic fallbacks from disabled sections are not activations.
+            if quiet.get() {
+                return;
+            }
+            let Some((key, _)) = CATEGORIES.get(page as usize) else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            if state.hud_tab != *key {
+                state.hud_tab = (*key).to_owned();
+                // A tab preference must never interrupt switching.
+                let _ = state.save();
+            }
+        });
         let cards: Vec<gtk::Box> = sections
             .values()
             .map(|section| section.card.clone())
@@ -264,6 +294,7 @@ impl HudStack {
             activity,
             placement,
             query_text: RefCell::new(String::new()),
+            quiet_tabs,
         }
     }
 
@@ -284,6 +315,11 @@ impl HudStack {
         monitor: Option<&gdk::Monitor>,
         bounds: gdk::Rectangle,
     ) {
+        // Hiding the current page makes GTK pick another one, and a disabled
+        // section falls back to the next visible page. Neither is an activation,
+        // so neither may replace the remembered tab.
+        self.quiet_tabs.set(true);
+        let _quiet = QuietTabs(&self.quiet_tabs);
         for (key, section) in &self.sections {
             let panel = panels
                 .iter()
@@ -338,7 +374,12 @@ impl HudStack {
             self.query.set_text(&result.snapshot.text);
             *self.query_text.borrow_mut() = result.snapshot.text.clone();
         }
-        word_actions::update(&self.word_actions, Some(result), &self.tx);
+        word_actions::update(
+            &self.word_actions,
+            Some(result),
+            &self.tx,
+            config.can_generate(writy_core::types::Capability::WritingAssistance),
+        );
         self.query.set_tooltip_text(Some(&result.snapshot.text));
         self.status.set_text(if !result.status.is_empty() {
             &result.status

@@ -154,6 +154,9 @@ fn run() -> Result<()> {
     }
     if matches!(action, Action::Models) {
         let config = Config::load()?;
+        if !config.model.local_enabled {
+            return Ok(());
+        }
         let models = runtime()?.block_on(writy_core::provider::ollama_models(
             &config.model.ollama_url,
         ))?;

@@ -21,7 +21,9 @@ The service starts from Hyprland's startup callback; it does not need separate
 `systemctl enable` activation. Avoid starting a second manual daemon.
 
 The default Ollama models are installed. Dictionary downloads are managed in
-Settings → Dictionary library. Cloud assistance is unconfigured. Local generation requires Ollama to be running.
+Settings → Dictionary library. Local and cloud AI providers are off by default.
+Enable each provider under Settings → AI models. Local generation requires Ollama
+to be running.
 
 ## Everyday controls
 
@@ -38,7 +40,8 @@ Settings → Dictionary library. Cloud assistance is unconfigured. Local generat
 The floating writing assistant has scrollable section tabs (Translation, Writing,
 Definition, Collocations, Examples, Synonyms & antonyms, and Word family).
 Use the tab-strip arrows or Shift + scroll up/down to change sections. Each tab
-has a fixed scroll area and retains its reading position. Drag the header to move
+has a fixed scroll area and retains its reading position. The panel reopens on the
+section you last activated. Drag the header to move
 the panel; its position persists for the session. The fullscreen button fills the
 current monitor and restores the compact panel on the next click. Drag across
 result text to select it; Arabic content is aligned to the right.

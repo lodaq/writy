@@ -249,7 +249,7 @@ fn native_component_gallery() {
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(128);
-    let view = View::new(&app, tx, Config::default());
+    let view = View::new(&app, tx, Config::default(), UiState::default());
     let search = view.borrow().search.clone();
     search.set_resizable(true);
     search.present();
@@ -639,6 +639,20 @@ fn native_component_gallery() {
     privacy[0].set_active(!offline);
     preferences.set_current_page(Some(2));
     snapshot(&settings[0], "settings-models");
+    let models = preferences.nth_page(Some(2)).unwrap();
+    let mut providers = Vec::new();
+    collect_switches(&models, &mut providers);
+    assert_eq!(providers.len(), 2);
+    for toggle in &providers {
+        let fields = toggle.parent().unwrap().next_sibling().unwrap();
+        assert!(!toggle.is_active());
+        assert!(!fields.get_visible());
+        toggle.set_active(true);
+        assert!(fields.get_visible());
+        toggle.set_active(false);
+        assert!(!fields.get_visible());
+    }
+
     preferences.set_current_page(Some(3));
     snapshot(&settings[0], "settings-translation");
     preferences.set_current_page(Some(4));
@@ -690,6 +704,9 @@ fn native_component_gallery() {
         settings[0].width() <= 400,
         "Settings must reflow at larger text sizes"
     );
+    for toggle in &providers {
+        toggle.set_active(true);
+    }
     for (index, name) in [
         (2, "models"),
         (3, "translation"),
@@ -714,6 +731,9 @@ fn native_component_gallery() {
             position.value() > 0.,
             "All {name} controls must remain reachable"
         );
+    }
+    for toggle in &providers {
+        toggle.set_active(false);
     }
     desktop.set_gtk_font_name(font.as_deref());
     settings[0].set_visible(false);
@@ -1376,7 +1396,7 @@ fn native_hud_drag_preserves_pointer_position() {
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(128);
-    let view = View::new(&app, tx, Config::default());
+    let view = View::new(&app, tx, Config::default(), UiState::default());
     view.borrow_mut().show(Results {
         writing: true,
         output_bounds: None,
@@ -1438,7 +1458,7 @@ fn native_bilingual_tabs_preserve_selection_without_translate_button() {
         .build();
     app.register(None::<&gio::Cancellable>).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(128);
-    let view = View::new(&app, tx, Config::default());
+    let view = View::new(&app, tx, Config::default(), UiState::default());
     let mut result = Results {
         generation: 1,
         snapshot: TextSnapshot {
@@ -1593,4 +1613,106 @@ fn native_bilingual_tabs_preserve_selection_without_translate_button() {
     );
     snapshot(&search, "automatic-arabic-translation");
     search.close();
+}
+
+#[test]
+fn result_tab_titles_map_to_stable_keys() {
+    assert_eq!(category_key("Translation"), Some("translation"));
+    assert_eq!(category_key("Definitions"), Some("definition"));
+    assert_eq!(category_key("Suggestions"), Some("suggestions"));
+    assert_eq!(category_key("Sources"), Some("sources"));
+    assert_eq!(category_key("Unclassified"), None);
+}
+
+#[test]
+#[ignore = "requires an isolated graphical session"]
+fn native_last_activated_tabs_persist_between_views() {
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("org.example.RestoreTabsTest")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let storage = std::env::temp_dir().join(format!("writy-ui-tabs-{}.toml", std::process::id()));
+    let _ = std::fs::remove_file(&storage);
+    let result = || Results {
+        generation: 1,
+        snapshot: TextSnapshot {
+            source: "search".into(),
+            focus_epoch: 1,
+            revision: 1,
+            language: Language::English,
+            text: "play".into(),
+            confidence: Confidence::Projected,
+        },
+        entries: vec![LexicalEntry {
+            headword: "play".into(),
+            senses: vec![Sense {
+                definitions: vec!["A game.".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        suggestions: vec![],
+        translation: None,
+        status: String::new(),
+        writing: false,
+        caret: None,
+        output: None,
+        output_bounds: None,
+    };
+
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let first = View::new(
+        &app,
+        tx.clone(),
+        Config::default(),
+        UiState::load_at(&storage),
+    );
+    assert_eq!(
+        first.borrow().hud.tabs.current_page(),
+        Some(0),
+        "without saved state the floating panel opens on Translation"
+    );
+    // Activating tabs is what a user does; these selections must reach the file.
+    first.borrow().hud.tabs.set_current_page(Some(4));
+    first.borrow_mut().show(result());
+    let tabs = first.borrow().results.clone();
+    let definition = (0..tabs.n_pages())
+        .find(|index| {
+            tabs.tab_label_text(&tabs.nth_page(Some(*index)).unwrap())
+                .as_deref()
+                == Some("Definitions")
+        })
+        .unwrap();
+    tabs.set_current_page(Some(definition));
+    let saved = UiState::load_at(&storage);
+    assert_eq!(saved.hud_tab, "examples");
+    assert_eq!(saved.search_tab, "definition");
+    first.borrow_mut().clear();
+    let cleared = UiState::load_at(&storage);
+    assert_eq!(
+        cleared.search_tab, "definition",
+        "clearing results must not replace the remembered tab"
+    );
+    assert_eq!(cleared.hud_tab, "examples");
+
+    let second = View::new(&app, tx, Config::default(), UiState::load_at(&storage));
+    assert_eq!(
+        second.borrow().hud.tabs.current_page(),
+        Some(4),
+        "reopen the floating panel on its last activated section"
+    );
+    second.borrow_mut().show(result());
+    let tabs = second.borrow().results.clone();
+    assert_eq!(
+        tabs.tab_label_text(&tabs.nth_page(tabs.current_page()).unwrap())
+            .as_deref(),
+        Some("Definitions"),
+        "reopen search results on the last activated tab"
+    );
+
+    first.borrow().search.close();
+    second.borrow().search.close();
+    let _ = std::fs::remove_file(&storage);
 }
