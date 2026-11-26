@@ -38,6 +38,7 @@ enum Event {
     Model(u64, Capability, Result<ProviderResult>),
     Checked(TextSnapshot, Vec<Suggestion>),
     CheckerReady,
+    Expanded,
     Observation {
         epoch: u64,
         revision: Option<u64>,
@@ -198,6 +199,7 @@ struct State {
     search: bool,
     hud_interacting: bool,
     selection: bool,
+    expanding: bool,
     inspecting: bool,
     access_status: String,
     checker_ready: bool,
@@ -226,16 +228,25 @@ impl State {
         }
     }
     fn allowed(&self) -> bool {
-        self.config
-            .capture_allowed(&self.app, self.prose, self.secure)
+        self.allowed_with_prose(self.prose)
+    }
+    fn allowed_with_prose(&self, prose: bool) -> bool {
+        self.config.capture_allowed(&self.app, prose, self.secure)
             && !self.paused
             && !self.search
             && !screenshot_app(&self.app)
             && !self.locked
     }
+    fn expander_active(&self) -> bool {
+        self.config.expander.enabled && !self.config.expander.rules.is_empty()
+    }
+    fn capture_enabled(&self) -> bool {
+        (self.allowed() && self.config.typing_popup)
+            || (self.expander_active() && self.allowed_with_prose(true))
+    }
     fn capture_lease(&self) {
         if let Some(tx) = &self.bridge {
-            let _=tx.try_send(serde_json::json!({"type":"capture","enabled":self.allowed() && self.config.typing_popup,"focus_epoch":self.epoch}));
+            let _=tx.try_send(serde_json::json!({"type":"capture","enabled":self.capture_enabled(),"focus_epoch":self.epoch}));
         }
     }
     fn publish(&self) {
@@ -445,7 +456,7 @@ impl State {
         let clipboard_event = matches!(cmd, Command::Clipboard { .. });
         match cmd {
             Command::HudInteraction { active } => { self.hud_interacting = active; },
-            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"paused":self.paused,"typing_popup":self.config.typing_popup,"selection_popup":self.config.selection_popup,"copy_popup":self.config.copy_popup,"offline":self.config.offline,"search_active":self.search,"hud_interacting":self.hud_interacting,"bridge_connected":self.bridge.is_some(),"capture":self.allowed()&&self.config.typing_popup&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
+            Command::Status=>return serde_json::json!({"enabled":self.config.enabled,"paused":self.paused,"typing_popup":self.config.typing_popup,"selection_popup":self.config.selection_popup,"copy_popup":self.config.copy_popup,"offline":self.config.offline,"search_active":self.search,"hud_interacting":self.hud_interacting,"bridge_connected":self.bridge.is_some(),"capture":self.capture_enabled()&&self.bridge.is_some(),"app":self.app,"buffer_chars":self.generation.buffer.snapshot().text.chars().count(),"revision":self.generation.buffer.snapshot().revision,"focus_epoch":self.epoch,"suggestions":self.generation.suggestions.len(),"accessibility":self.access_status,"selection_active":self.selection,"dictionary_matches":self.generation.entries.len(),"checker_ready":self.checker_ready,"verified":self.generation.current.as_ref().is_some_and(|s|s.confidence==Confidence::Verified)}).to_string(),
             Command::Search{text}=>{let query=text.or_else(||self.generation.current.as_ref().map(|s|s.text.clone()));self.clear();self.search=true;self.capture_lease();let _=self.ui.try_send(UiEvent::Search(query));}
             Command::WordInsights { generation } => {
                 if generation != self.generation.id() || !self.generation.current.as_ref().is_some_and(|s| writy_core::types::is_single_word(&s.text)) { return "Word is stale or invalid".into(); }
@@ -609,7 +620,7 @@ impl State {
                 focus_epoch,
                 ..
             } => {
-                if focus_epoch != self.epoch || !self.allowed() || !self.config.typing_popup {
+                if focus_epoch != self.epoch || !self.capture_enabled() || self.expanding {
                     return;
                 }
                 match self.generation.decoder.key(&device, keycode, state) {
@@ -619,9 +630,29 @@ impl State {
                             self.selection = false;
                         }
                         let clear = self.generation.type_text(&text);
-                        self.last_change = Instant::now();
-                        let _ = self.ui.try_send(clear);
-                        self.publish();
+                        if let Some(matched) = self.generation.current.as_ref().and_then(|s| {
+                            writy_core::expander::match_suffix(&s.text, &self.config.expander)
+                        }) {
+                            self.expanding = true;
+                            self.clear_with_huds(true);
+                            let ui = self.ui.clone();
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) =
+                                    expand_with_wtype(matched.delete_chars, &matched.replacement)
+                                        .await
+                                {
+                                    let _ = ui.try_send(UiEvent::Notice(err.to_string()));
+                                }
+                                let _ = tx.send(Event::Expanded).await;
+                            });
+                            return;
+                        }
+                        if self.config.typing_popup && self.allowed() {
+                            self.last_change = Instant::now();
+                            let _ = self.ui.try_send(clear);
+                            self.publish();
+                        }
                     }
                     Decoded::Reset => {
                         self.clear_with_huds(true);
@@ -633,6 +664,30 @@ impl State {
         }
     }
 }
+async fn expand_with_wtype(delete_chars: usize, replacement: &str) -> Result<()> {
+    let mut cmd = tokio::process::Command::new("wtype");
+    for _ in 0..delete_chars {
+        cmd.args(["-k", "BackSpace"]);
+    }
+    cmd.arg("-");
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .context("Word expander requires wtype; install wtype")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(replacement.as_bytes()).await?;
+    }
+    let output = child.wait_with_output().await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "Word expander failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
 fn generated_lexical_entry(
     snapshot: &TextSnapshot,
     entries: &[LexicalEntry],
@@ -765,6 +820,7 @@ async fn run(
         search: false,
         hud_interacting: false,
         selection: false,
+        expanding: false,
         inspecting: false,
         access_status: String::new(),
         checker_ready: false,
@@ -799,6 +855,7 @@ async fn run(
                 Event::Bridge(session,event)=>{if session==s.bridge_session{s.bridge_event(event,&events).await;}}
                 Event::Observation{epoch,revision,observation}=>{s.inspecting=false;if epoch==s.epoch{s.observation(observation,revision);}}
                 Event::CheckerReady=>{s.checker_ready=true;}
+                Event::Expanded=>{s.expanding=false;s.clear_with_huds(true);}
                 Event::Checked(snapshot, suggestions)=>{
                     if s.generation.current.as_ref().is_some_and(|c|c.same_context(&snapshot)) {
                         s.generation.suggestions.retain(|s|s.provider != "Harper · local" && s.kind==SuggestionKind::Rewrite);
@@ -1013,6 +1070,7 @@ mod tests {
             search: false,
             hud_interacting: false,
             selection: false,
+            expanding: false,
             inspecting: false,
             access_status: String::new(),
             checker_ready: false,

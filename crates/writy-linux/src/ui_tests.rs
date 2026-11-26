@@ -622,7 +622,7 @@ fn native_component_gallery() {
         .unwrap()
         .downcast::<gtk::Notebook>()
         .unwrap();
-    assert_eq!(preferences.n_pages(), 6);
+    assert_eq!(preferences.n_pages(), 7);
     scroll_tab(&preferences, 1.);
     assert_eq!(
         preferences.current_page(),
@@ -711,7 +711,8 @@ fn native_component_gallery() {
         (2, "models"),
         (3, "translation"),
         (4, "panels"),
-        (5, "dictionaries"),
+        (5, "expander"),
+        (6, "dictionaries"),
     ] {
         preferences.set_current_page(Some(index));
         let page = preferences
@@ -1715,4 +1716,31 @@ fn native_last_activated_tabs_persist_between_views() {
     first.borrow().search.close();
     second.borrow().search.close();
     let _ = std::fs::remove_file(&storage);
+}
+
+#[test]
+#[ignore = "requires an isolated graphical session"]
+fn editor_expands_typed_postfix_at_cursor() {
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("org.example.EditorExpansionTest")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let mut config = Config::default();
+    config.expander.enabled = true;
+    config.expander.rules = vec![writy_core::config::ExpansionRule {
+        trigger: "idk".into(),
+        replacement: "I don't know".into(),
+    }];
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let view = View::new(&app, tx, config, UiState::default());
+    let buffer = view.borrow().editor.buffer();
+    buffer.set_text("idk; idk here");
+    buffer.place_cursor(&buffer.iter_at_offset(8));
+    buffer.insert_interactive_at_cursor(";", true);
+    assert_eq!(
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
+        "idk; I don't know here"
+    );
 }

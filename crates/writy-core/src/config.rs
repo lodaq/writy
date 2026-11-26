@@ -11,6 +11,7 @@ pub struct Config {
     pub copy_popup: bool,
     pub typing_popup: bool,
     pub typing: Typing,
+    pub expander: WordExpander,
     pub model: Models,
     pub apps: Apps,
     pub huds: BTreeMap<String, bool>,
@@ -20,6 +21,18 @@ pub struct Config {
 pub struct Typing {
     pub idle_ms: u64,
     pub min_rephrase_words: usize,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WordExpander {
+    pub enabled: bool,
+    pub postfix: String,
+    pub rules: Vec<ExpansionRule>,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpansionRule {
+    pub trigger: String,
+    pub replacement: String,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -83,6 +96,15 @@ impl Default for Typing {
         }
     }
 }
+impl Default for WordExpander {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            postfix: ";".into(),
+            rules: Vec::new(),
+        }
+    }
+}
 impl Default for Models {
     fn default() -> Self {
         Self {
@@ -132,6 +154,7 @@ impl Default for Config {
             copy_popup: false,
             typing_popup: true,
             typing: Typing::default(),
+            expander: WordExpander::default(),
             model: Models::default(),
             apps: Apps::default(),
             huds: [
@@ -170,6 +193,15 @@ impl Config {
         ensure!(
             (1..=100).contains(&self.typing.min_rephrase_words),
             "typing.min_rephrase_words must be 1..100"
+        );
+        ensure!(
+            !self.expander.postfix.is_empty()
+                && !self.expander.postfix.chars().any(char::is_control),
+            "expander.postfix must be non-empty without control characters"
+        );
+        ensure!(
+            self.expander.rules.iter().all(|r| !r.trigger.is_empty()),
+            "expander rules must have non-empty triggers"
         );
         ensure!(
             (1..=120).contains(&self.model.timeout_secs),

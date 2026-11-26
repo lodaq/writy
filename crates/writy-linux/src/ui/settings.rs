@@ -386,6 +386,77 @@ impl View {
             huds.push((key, c));
         }
         panel_options.append(&toggles);
+        let expander = page(
+            &pages,
+            "Word expander",
+            "Word expander",
+            "Expand short triggers into full text when followed by the postfix.",
+        );
+        let (row, expander_enabled) = toggle_row(
+            "Enable word expander",
+            "Replace matching triggers as you type in Writy and other apps (external apps require wtype).",
+            loaded.expander.enabled,
+        );
+        expander.append(&row);
+        expander.append(&label("Trigger postfix", "writy-meta"));
+        let postfix_entry = gtk::Entry::new();
+        postfix_entry.set_width_chars(6);
+        postfix_entry.set_text(&loaded.expander.postfix);
+        postfix_entry.set_placeholder_text(Some(";"));
+        postfix_entry.update_property(&[gtk::accessible::Property::Label("Trigger postfix")]);
+        expander.append(&postfix_entry);
+        expander.append(&label("Expansion rules", "writy-preference-title"));
+        let rules_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        expander.append(&rules_box);
+        let rule_rows: Rc<RefCell<Vec<(gtk::Entry, gtk::Entry)>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let append_rule = {
+            let rules_box = rules_box.clone();
+            let rule_rows = rule_rows.clone();
+            move |trigger: &str, replacement: &str| {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let trigger_entry = gtk::Entry::new();
+                trigger_entry.set_width_chars(10);
+                trigger_entry.set_placeholder_text(Some("Trigger (e.g. idk)"));
+                trigger_entry.set_text(trigger);
+                trigger_entry.update_property(&[gtk::accessible::Property::Label("Trigger")]);
+                let arrow = label("→", "writy-meta");
+                let replacement_entry = gtk::Entry::new();
+                replacement_entry.set_hexpand(true);
+                replacement_entry.set_width_chars(14);
+                replacement_entry.set_placeholder_text(Some("Replacement text"));
+                replacement_entry.set_text(replacement);
+                replacement_entry
+                    .update_property(&[gtk::accessible::Property::Label("Replacement")]);
+                let remove = gtk::Button::with_label("Remove");
+                remove.add_css_class("flat");
+                let list_weak = rules_box.downgrade();
+                let row_weak = row.downgrade();
+                remove.connect_clicked(move |_| {
+                    if let (Some(list), Some(row)) = (list_weak.upgrade(), row_weak.upgrade()) {
+                        list.remove(&row);
+                    }
+                });
+                row.append(&trigger_entry);
+                row.append(&arrow);
+                row.append(&replacement_entry);
+                row.append(&remove);
+                rules_box.append(&row);
+                rule_rows
+                    .borrow_mut()
+                    .push((trigger_entry, replacement_entry));
+            }
+        };
+        if loaded.expander.rules.is_empty() {
+            append_rule("", "");
+        } else {
+            for rule in &loaded.expander.rules {
+                append_rule(&rule.trigger, &rule.replacement);
+            }
+        }
+        let add_rule = components::action_button("Add rule");
+        add_rule.connect_clicked(move |_| append_rule("", ""));
+        expander.append(&add_rule);
         let message = label("", "writy-status");
         let dictionaries = page(
             &pages,
@@ -409,6 +480,7 @@ impl View {
         save.add_css_class("suggested-action");
         let tx = self.tx.clone();
         let msg = message.clone();
+        let editor_rules = self.editor_rules.clone();
         save.connect_clicked(move |_| {
             let mut c = loaded.clone();
             c.offline = offline.is_active();
@@ -444,8 +516,28 @@ impl View {
             for (key, toggle) in &huds {
                 c.huds.insert((*key).into(), toggle.is_active());
             }
+            c.expander.enabled = expander_enabled.is_active();
+            c.expander.postfix = postfix_entry.text().to_string();
+            c.expander.rules = rule_rows
+                .borrow()
+                .iter()
+                .filter(|(trigger, _)| trigger.parent().is_some())
+                .filter_map(|(trigger, replacement)| {
+                    let t = trigger.text().trim().to_string();
+                    let r = replacement.text().to_string();
+                    if t.is_empty() && r.is_empty() {
+                        None
+                    } else {
+                        Some(writy_core::config::ExpansionRule {
+                            trigger: t,
+                            replacement: r,
+                        })
+                    }
+                })
+                .collect();
             match c.save() {
                 Ok(()) => {
+                    *editor_rules.borrow_mut() = c.expander.clone();
                     send(&tx, Command::Reload);
                     msg.set_text("Saved. Settings applied; no restart needed.");
                 }

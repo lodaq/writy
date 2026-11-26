@@ -542,6 +542,8 @@ struct View {
     config: Config,
     search: gtk::ApplicationWindow,
     editor: gtk::TextView,
+    editor_rules: Rc<RefCell<writy_core::config::WordExpander>>,
+    editor_paused: Rc<std::cell::Cell<bool>>,
     image_input: image_input::ImageInput,
     search_debounce: Rc<RefCell<Option<glib::SourceId>>>,
     results: gtk::Notebook,
@@ -636,6 +638,49 @@ impl View {
         search.set_decorated(false);
         root.append(&header);
         let editor = gtk::TextView::new();
+        let editor_rules = Rc::new(RefCell::new(config.expander.clone()));
+        let editor_paused = Rc::new(std::cell::Cell::new(false));
+        let rules = editor_rules.clone();
+        let paused = editor_paused.clone();
+        let candidate = Rc::new(std::cell::Cell::new(false));
+        let inserted = candidate.clone();
+        editor.buffer().connect_insert_text(move |_, _, text| {
+            let rules = rules.borrow();
+            inserted
+                .set(rules.enabled && text.chars().count() == 1 && rules.postfix.ends_with(text));
+        });
+        // GTK groups keyboard edits into user actions. Programmatic query prefills
+        // bypass them, and replacing here uses the final cursor position after IME input.
+        editor.buffer().connect_begin_user_action({
+            let candidate = candidate.clone();
+            move |_| candidate.set(false)
+        });
+        let rules = editor_rules.clone();
+        editor.buffer().connect_end_user_action(move |buffer| {
+            if !candidate.replace(false) || paused.get() {
+                return;
+            }
+            let mut end = buffer.iter_at_offset(buffer.cursor_position());
+            let rules = rules.borrow();
+            let limit = rules
+                .rules
+                .iter()
+                .map(|r| r.trigger.chars().count())
+                .max()
+                .unwrap_or(0)
+                + rules.postfix.chars().count()
+                + 1;
+            let mut start = end;
+            start.backward_chars(limit as i32);
+            if let Some(hit) =
+                writy_core::expander::match_suffix(&buffer.text(&start, &end, true), &rules)
+            {
+                start = end;
+                start.backward_chars(hit.delete_chars as i32);
+                buffer.delete(&mut start, &mut end);
+                buffer.insert(&mut start, &hit.replacement);
+            }
+        });
         let image_input = image_input::ImageInput::new(&editor);
         editor.set_wrap_mode(gtk::WrapMode::WordChar);
         editor.add_css_class("writy-query");
@@ -790,6 +835,8 @@ impl View {
             config,
             search,
             editor,
+            editor_rules,
+            editor_paused,
             image_input,
             search_debounce,
             results,
@@ -1185,11 +1232,14 @@ fn attach(view: Rc<RefCell<View>>, rx: Receiver<UiEvent>, generation: Arc<Atomic
                         view.show(*result);
                     }
                 }
-                UiEvent::Paused(paused) => view.pause.set_label(if paused {
-                    "Resume automatic assistance"
-                } else {
-                    "Pause automatic assistance"
-                }),
+                UiEvent::Paused(paused) => {
+                    view.editor_paused.set(paused);
+                    view.pause.set_label(if paused {
+                        "Resume automatic assistance"
+                    } else {
+                        "Pause automatic assistance"
+                    });
+                }
                 UiEvent::Notice(notice) => view.status.set_text(&notice),
                 UiEvent::Copy(text) => {
                     clipboard(&text);
