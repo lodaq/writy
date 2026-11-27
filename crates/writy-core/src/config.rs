@@ -15,6 +15,83 @@ pub struct Config {
     pub model: Models,
     pub apps: Apps,
     pub huds: BTreeMap<String, bool>,
+    pub harper: HarperConfig,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnglishDialect {
+    #[default]
+    American,
+    British,
+    Canadian,
+    Australian,
+    Indian,
+}
+impl EnglishDialect {
+    pub const ALL: [Self; 5] = [
+        Self::American,
+        Self::British,
+        Self::Canadian,
+        Self::Australian,
+        Self::Indian,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::American => "American English",
+            Self::British => "British English",
+            Self::Canadian => "Canadian English",
+            Self::Australian => "Australian English",
+            Self::Indian => "Indian English",
+        }
+    }
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HarperConfig {
+    pub enabled: bool,
+    pub dialect: EnglishDialect,
+    pub disabled_rules: Vec<String>,
+    pub dictionary: Vec<String>,
+}
+impl Default for HarperConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dialect: EnglishDialect::American,
+            disabled_rules: Vec::new(),
+            dictionary: Vec::new(),
+        }
+    }
+}
+impl HarperConfig {
+    pub fn add_dictionary_word(&mut self, word: &str) -> bool {
+        let word = word.trim();
+        if word.is_empty() || self.dictionary.iter().any(|w| w == word) {
+            return false;
+        }
+        self.dictionary.push(word.to_owned());
+        self.dictionary.sort();
+        true
+    }
+    pub fn remove_dictionary_word(&mut self, word: &str) -> bool {
+        let before = self.dictionary.len();
+        self.dictionary.retain(|w| w != word);
+        self.dictionary.len() != before
+    }
+    pub fn disable_rule(&mut self, rule: &str) -> bool {
+        let rule = rule.trim();
+        if rule.is_empty() || self.disabled_rules.iter().any(|r| r == rule) {
+            return false;
+        }
+        self.disabled_rules.push(rule.to_owned());
+        self.disabled_rules.sort();
+        true
+    }
+    pub fn enable_rule(&mut self, rule: &str) -> bool {
+        let before = self.disabled_rules.len();
+        self.disabled_rules.retain(|r| r != rule);
+        self.disabled_rules.len() != before
+    }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -169,6 +246,7 @@ impl Default for Config {
             .into_iter()
             .map(|s| (s.into(), true))
             .collect(),
+            harper: HarperConfig::default(),
         }
     }
 }

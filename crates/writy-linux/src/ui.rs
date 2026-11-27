@@ -20,6 +20,7 @@ use writy_core::{config::Config, state::UiState, types::SuggestionKind};
 
 mod components;
 mod dictionaries;
+mod editor_lint;
 mod hud;
 mod image_input;
 mod settings;
@@ -542,8 +543,10 @@ struct View {
     config: Config,
     search: gtk::ApplicationWindow,
     editor: gtk::TextView,
+    editor_lint: editor_lint::EditorLintController,
     editor_rules: Rc<RefCell<writy_core::config::WordExpander>>,
     editor_paused: Rc<std::cell::Cell<bool>>,
+    open_harper_settings: Rc<std::cell::Cell<bool>>,
     image_input: image_input::ImageInput,
     search_debounce: Rc<RefCell<Option<glib::SourceId>>>,
     results: gtk::Notebook,
@@ -825,6 +828,13 @@ impl View {
                 },
             ));
         });
+        let open_harper_settings = Rc::new(std::cell::Cell::new(false));
+        let editor_lint = editor_lint::EditorLintController::new(
+            &editor,
+            &tx,
+            &config.harper,
+            open_harper_settings.clone(),
+        );
         let hud = hud::HudStack::new(app, &tx, state);
         let pause = components::action_button("Pause automatic assistance");
         let pause_tx = tx.clone();
@@ -835,8 +845,10 @@ impl View {
             config,
             search,
             editor,
+            editor_lint,
             editor_rules,
             editor_paused,
+            open_harper_settings,
             image_input,
             search_debounce,
             results,
@@ -960,6 +972,8 @@ impl View {
         if let Ok(config) = Config::load() {
             self.config = config;
         }
+        self.editor_lint.update_harper_config(&self.config.harper);
+        self.editor_lint.merge_results(&result);
         self.tab_copy_texts.borrow_mut().clear();
         while self.results.n_pages() > 0 {
             self.results.remove_page(Some(0));

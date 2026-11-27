@@ -20,7 +20,7 @@ use tokio::{
 };
 use writy_core::{
     buffer::TypingBuffer,
-    config::Config,
+    config::{Config, HarperConfig},
     dictionary::Dictionary,
     linter::EnglishChecker,
     provider::{ImprovementFeedback, ModelService, WritingAssistance, writing_word},
@@ -184,7 +184,7 @@ struct State {
     ui: SyncSender<UiEvent>,
     generation: Generation,
     dictionary: Dictionary,
-    checker: tokio::sync::watch::Sender<Option<TextSnapshot>>,
+    checker: tokio::sync::watch::Sender<(HarperConfig, Option<TextSnapshot>)>,
     access: Accessibility,
     app: String,
     window: String,
@@ -420,8 +420,9 @@ impl State {
         self.generation.entries = self.dictionary.lookup(&snapshot.text).unwrap_or_default();
         self.generation.current = Some(snapshot.clone());
         self.generation.add_synonyms();
-        if !translate && !selection {
-            self.checker.send_replace(Some(snapshot.clone()));
+        if !selection {
+            self.checker
+                .send_replace((self.config.harper.clone(), Some(snapshot.clone())));
         }
         self.generation.notice = if self.generation.entries.is_empty() {
             "No local entry. Install dictionaries in Settings.".into()
@@ -479,7 +480,7 @@ impl State {
             Command::Pause=>{self.paused= !self.paused;let _=self.ui.try_send(UiEvent::Paused(self.paused));if !self.search {self.clear();}self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.paused{"Automatic assistance paused"}else{"Automatic assistance resumed"}.into()));}
             Command::Prose=>{self.prose= !self.prose;self.clear();self.capture_lease();let _=self.ui.try_send(UiEvent::Notice(if self.prose{"Assistance allowed in this terminal until focus changes"}else{"Assistance disabled in this terminal"}.into()));}
             Command::Offline{enabled}=>{self.config.offline=enabled;self.clear();}
-            Command::Reload=>match Config::load(){Ok(c)=>{self.config=c;self.clear();self.capture_lease();},Err(_)=>return "invalid configuration".into()},
+            Command::Reload=>match Config::load(){Ok(c)=>{self.config=c;self.checker.send_replace((self.config.harper.clone(), None));self.clear();self.capture_lease();},Err(_)=>return "invalid configuration".into()},
             Command::DismissSuggestion { generation, suggestion } => {
                 if generation > self.generation.id() || self.generation.current.as_ref().is_some_and(|current| current.text != suggestion.snapshot.text) { return "Suggestion is stale".into(); }
                 self.generation.dismissed.push(suggestion);
@@ -797,6 +798,7 @@ async fn run(
     let mut watching_selection = false;
     let mut watching_copy = false;
     let dictionary = ipc::open_dictionary()?;
+    let checker = start_checker(config.harper.clone(), events.clone());
     let mut s = State {
         config,
         paused: false,
@@ -805,7 +807,7 @@ async fn run(
         ui,
         generation: Generation::new(generation),
         dictionary,
-        checker: start_checker(events.clone()),
+        checker,
         access: Accessibility::start(),
         app: String::new(),
         window: String::new(),
@@ -901,7 +903,7 @@ async fn run(
                 if s.search||s.selection||!s.allowed()||!s.config.typing_popup{continue;}
                 let Some(current)=s.generation.current.clone()else{continue;};if current.text.trim().is_empty(){continue;}
                 if s.generation.local_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(60){
-                    s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.generation.add_synonyms();s.checker.send_replace(Some(current.clone()));
+                    s.inspect(&events);let Some(current)=s.generation.current.clone()else{continue;};s.generation.local_revision=current.revision;s.generation.entries=s.dictionary.lookup(writing_word(&current.text)).unwrap_or_default();s.generation.add_synonyms();s.checker.send_replace((s.config.harper.clone(), Some(current.clone())));
                     s.publish();
                 }
                 if s.config.can_generate(Capability::WritingAssistance) && s.generation.model_revision!=current.revision && s.last_change.elapsed()>=Duration::from_millis(s.config.typing.idle_ms)&&sentence_ready(&current.text){s.request(Capability::WritingAssistance,&events);}
@@ -911,17 +913,22 @@ async fn run(
     s.generation.cancel_model();
     Ok(())
 }
-fn start_checker(events: mpsc::Sender<Event>) -> tokio::sync::watch::Sender<Option<TextSnapshot>> {
-    let (sender, mut receiver) = tokio::sync::watch::channel::<Option<TextSnapshot>>(None);
+fn start_checker(
+    initial: HarperConfig,
+    events: mpsc::Sender<Event>,
+) -> tokio::sync::watch::Sender<(HarperConfig, Option<TextSnapshot>)> {
+    let (sender, mut receiver) =
+        tokio::sync::watch::channel((initial.clone(), None::<TextSnapshot>));
     std::thread::Builder::new()
         .name("writy-english".into())
         .spawn(move || {
-            let mut checker = EnglishChecker::default();
+            let mut checker = EnglishChecker::from_config(&initial);
             let _ = events.blocking_send(Event::CheckerReady);
             loop {
                 match receiver.has_changed() {
                     Ok(true) => {
-                        let snapshot = receiver.borrow_and_update().clone();
+                        let (config, snapshot) = receiver.borrow_and_update().clone();
+                        checker.configure(&config);
                         if let Some(snapshot) = snapshot {
                             let suggestions = checker.check(&snapshot);
                             if events
@@ -1055,7 +1062,7 @@ mod tests {
             ui,
             generation: Generation::new(generation.clone()),
             dictionary: Dictionary::open(":memory:").unwrap(),
-            checker: tokio::sync::watch::channel(None).0,
+            checker: tokio::sync::watch::channel((HarperConfig::default(), None)).0,
             access: Accessibility::start(),
             app: String::new(),
             window: String::new(),

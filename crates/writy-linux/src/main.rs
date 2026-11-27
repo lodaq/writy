@@ -150,7 +150,10 @@ fn run() -> Result<()> {
         };
         let mut buffer = writy_core::buffer::TypingBuffer::default();
         buffer.push(&text);
-        let suggestions = writy_core::linter::EnglishChecker::default().check(&buffer.snapshot());
+        let mut checker = Config::load()
+            .map(|c| writy_core::linter::EnglishChecker::from_config(&c.harper))
+            .unwrap_or_default();
+        let suggestions = checker.check(&buffer.snapshot());
         println!("{}", serde_json::to_string_pretty(&suggestions)?);
         return Ok(());
     }

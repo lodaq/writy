@@ -41,6 +41,12 @@ impl View {
             .into_iter()
             .find(|w| w.has_css_class("writy-settings"))
         {
+            if self.open_harper_settings.replace(false)
+                && let Some(shell) = window.child().and_downcast::<gtk::Box>()
+                && let Some(pages) = shell.first_child().and_downcast::<gtk::Notebook>()
+            {
+                pages.set_current_page(Some(7));
+            }
             window.present();
             return;
         }
@@ -476,11 +482,62 @@ impl View {
             super::dictionaries::populate(&list, &dictionary_tx, &dictionary_message)
         });
         dictionaries.append(&refresh_dictionaries);
+        let harper_page = page(
+            &pages,
+            "English checks",
+            "English checks (Harper)",
+            "Highlight spelling, grammar, and style improvements as you type in Writy.",
+        );
+        let (row, harper_enabled) = toggle_row(
+            "Highlight mistakes and improvements",
+            "Underline spelling, grammar, and style suggestions inside the editor.",
+            loaded.harper.enabled,
+        );
+        harper_page.append(&row);
+        harper_page.append(&label("English dialect", "writy-meta"));
+        let dialect_labels: Vec<&str> = writy_core::config::EnglishDialect::ALL
+            .iter()
+            .map(|d| d.label())
+            .collect();
+        let dialect = gtk::DropDown::from_strings(&dialect_labels);
+        dialect.update_property(&[gtk::accessible::Property::Label("English dialect")]);
+        dialect.set_selected(
+            writy_core::config::EnglishDialect::ALL
+                .iter()
+                .position(|d| *d == loaded.harper.dialect)
+                .unwrap_or(0) as u32,
+        );
+        harper_page.append(&dialect);
+        harper_page.append(&label(
+            "Personal dictionary (one word per line)",
+            "writy-meta",
+        ));
+        let harper_dict = gtk::TextView::new();
+        harper_dict.set_wrap_mode(gtk::WrapMode::WordChar);
+        harper_dict.set_size_request(-1, 80);
+        harper_dict
+            .buffer()
+            .set_text(&loaded.harper.dictionary.join("\n"));
+        harper_dict.update_property(&[gtk::accessible::Property::Label("Personal dictionary")]);
+        harper_page.append(&harper_dict);
+        harper_page.append(&label(
+            "Disabled Harper rules (one rule name per line; remove a line to re-enable)",
+            "writy-meta",
+        ));
+        let harper_rules = gtk::TextView::new();
+        harper_rules.set_wrap_mode(gtk::WrapMode::WordChar);
+        harper_rules.set_size_request(-1, 80);
+        harper_rules
+            .buffer()
+            .set_text(&loaded.harper.disabled_rules.join("\n"));
+        harper_rules.update_property(&[gtk::accessible::Property::Label("Disabled Harper rules")]);
+        harper_page.append(&harper_rules);
         let save = components::action_button("Save settings");
         save.add_css_class("suggested-action");
         let tx = self.tx.clone();
         let msg = message.clone();
         let editor_rules = self.editor_rules.clone();
+        let editor_lint = self.editor_lint.clone();
         save.connect_clicked(move |_| {
             let mut c = loaded.clone();
             c.offline = offline.is_active();
@@ -535,9 +592,43 @@ impl View {
                     }
                 })
                 .collect();
+            c.harper.enabled = harper_enabled.is_active();
+            c.harper.dialect = writy_core::config::EnglishDialect::ALL
+                .get(dialect.selected() as usize)
+                .copied()
+                .unwrap_or_default();
+            c.harper.dictionary = harper_dict
+                .buffer()
+                .text(
+                    &harper_dict.buffer().start_iter(),
+                    &harper_dict.buffer().end_iter(),
+                    false,
+                )
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
+            c.harper.dictionary.sort();
+            c.harper.dictionary.dedup();
+            c.harper.disabled_rules = harper_rules
+                .buffer()
+                .text(
+                    &harper_rules.buffer().start_iter(),
+                    &harper_rules.buffer().end_iter(),
+                    false,
+                )
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
+            c.harper.disabled_rules.sort();
+            c.harper.disabled_rules.dedup();
             match c.save() {
                 Ok(()) => {
                     *editor_rules.borrow_mut() = c.expander.clone();
+                    editor_lint.update_harper_config(&c.harper);
                     send(&tx, Command::Reload);
                     msg.set_text("Saved. Settings applied; no restart needed.");
                 }
@@ -550,6 +641,9 @@ impl View {
         footer.append(&message);
         footer.append(&save);
         components::enable_wheel_tab_switching(&pages);
+        if self.open_harper_settings.replace(false) {
+            pages.set_current_page(Some(7));
+        }
         shell.append(&pages);
         shell.append(&footer);
         window.set_child(Some(&shell));

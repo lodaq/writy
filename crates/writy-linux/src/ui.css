@@ -373,3 +373,98 @@ window.writy-main { background: @writy_bg; }
 
 .writy-word-video { background: #347df2; color: white; border-radius: 8px; }
 .writy-word-insights { background: #db8100; color: white; border-radius: 8px; }
+
+/* Inline editor lint popover (Harper-inspired two-pane suggestion card). */
+popover.writy-lint-popover > contents {
+    background: @writy_surface;
+    border: 1px solid alpha(@theme_fg_color, .18);
+    border-radius: 14px;
+    padding: 8px;
+}
+.writy-lint-card-row {
+    min-width: 240px;
+}
+.writy-lint-choices {
+    min-width: 150px;
+}
+.writy-lint-choice {
+    background: alpha(@theme_fg_color, .06);
+    border: 1px solid alpha(@theme_fg_color, .12);
+    border-radius: 10px;
+    padding: 6px 9px;
+}
+.writy-lint-choice:hover {
+    background: alpha(@theme_fg_color, .12);
+}
+.writy-lint-choice-label {
+    font-weight: 600;
+}
+.writy-lint-bar {
+    min-width: 3px;
+    border-radius: 2px;
+}
+.writy-lint-top-bar {
+    min-height: 3px;
+    border-radius: 2px;
+}
+.writy-lint-bar.writy-lint-spelling,
+.writy-lint-top-bar.writy-lint-spelling {
+    background: #f43f5e;
+}
+.writy-lint-bar.writy-lint-grammar,
+.writy-lint-top-bar.writy-lint-grammar {
+    background: #a855f7;
+}
+.writy-lint-bar.writy-lint-improvement,
+.writy-lint-top-bar.writy-lint-improvement {
+    background: #0ea5e9;
+}
+.writy-lint-arrow {
+    opacity: .6;
+    -gtk-icon-size: 14px;
+}
+.writy-lint-settings-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 5px 8px;
+    color: alpha(@theme_fg_color, .78);
+    font-size: .9em;
+}
+.writy-lint-settings-btn:hover {
+    background: alpha(@theme_fg_color, .08);
+    color: @theme_fg_color;
+}
+.writy-lint-detail {
+    background: alpha(@theme_fg_color, .04);
+    border: 1px solid alpha(@theme_fg_color, .1);
+    border-radius: 11px;
+    padding: 8px 10px;
+    min-width: 210px;
+}
+.writy-lint-category {
+    font-weight: 700;
+    font-size: .95em;
+}
+.writy-lint-message {
+    font-size: .95em;
+}
+.writy-lint-dismiss {
+    border-radius: 8px;
+    padding: 4px 10px;
+}
+.writy-lint-dict-btn {
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+.writy-lint-disable {
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    font-size: .85em;
+    color: alpha(@theme_fg_color, .76);
+}
+.writy-lint-disable:hover {
+    color: @theme_fg_color;
+    text-decoration: underline;
+}

@@ -622,7 +622,7 @@ fn native_component_gallery() {
         .unwrap()
         .downcast::<gtk::Notebook>()
         .unwrap();
-    assert_eq!(preferences.n_pages(), 7);
+    assert_eq!(preferences.n_pages(), 8);
     scroll_tab(&preferences, 1.);
     assert_eq!(
         preferences.current_page(),
@@ -1743,4 +1743,149 @@ fn editor_expands_typed_postfix_at_cursor() {
         buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
         "idk; I don't know here"
     );
+}
+
+#[test]
+#[ignore = "requires an isolated graphical session"]
+fn editor_highlights_mistakes_and_improvements_and_applies_popover_fix() {
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("org.example.EditorLintTest")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    let view = View::new(&app, tx, Config::default(), UiState::default());
+    let search = view.borrow().search.clone();
+    search.set_resizable(true);
+    search.set_default_size(860, 620);
+    search.present();
+    settle();
+
+    let editor = view.borrow().editor.clone();
+    let buffer = editor.buffer();
+    buffer.set_text("Wether i know very unique things.");
+    // Wait for automatic debounced worker check (no manual check_now call).
+    let context = glib::MainContext::default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < deadline
+        && view.borrow().editor_lint.active_findings_count() < 3
+    {
+        while context.pending() {
+            context.iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        view.borrow().editor_lint.active_findings_count() >= 3,
+        "debounced typing check must highlight findings automatically"
+    );
+
+    // Spelling tag applied to "Wether".
+    let wether_iter = buffer.iter_at_offset(1);
+    assert!(
+        wether_iter
+            .tags()
+            .iter()
+            .any(|t| { t.name().as_deref() == Some("writy-lint-spelling") })
+    );
+
+    // Improvement tag applied to "very unique".
+    let unique_iter = buffer.iter_at_offset(16);
+    assert!(
+        unique_iter
+            .tags()
+            .iter()
+            .any(|t| { t.name().as_deref() == Some("writy-lint-improvement") })
+    );
+
+    // Simulate a real pointer click over "Wether" when running under X11/Xvfb.
+    if gdk::Display::default().is_some_and(|d| d.type_().name() == "GdkX11Display") {
+        let loc = editor.iter_location(&wether_iter);
+        let (wx, wy) = editor.buffer_to_window_coords(
+            gtk::TextWindowType::Widget,
+            loc.x() + loc.width() / 2,
+            loc.y() + loc.height() / 2,
+        );
+        let point = editor
+            .compute_point(&search, &gtk::graphene::Point::new(wx as f32, wy as f32))
+            .unwrap();
+        let status = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(r#"
+import ctypes, sys
+x11 = ctypes.CDLL('libX11.so.6')
+xtest = ctypes.CDLL('libXtst.so.6')
+x11.XOpenDisplay.restype = ctypes.c_void_p
+display = x11.XOpenDisplay(None)
+assert display, 'X11 test display is unavailable'
+xtest.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+xtest.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+xtest.XTestFakeMotionEvent(display, -1, int(sys.argv[1]), int(sys.argv[2]), 0)
+for pressed in [1, 0]:
+    xtest.XTestFakeButtonEvent(display, 1, pressed, 0)
+x11.XSync(display, 0)
+x11.XCloseDisplay(display)
+"#)
+            .args([
+                (point.x().round() as i32).to_string(),
+                (point.y().round() as i32).to_string(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        settle();
+    } else {
+        assert!(view.borrow().editor_lint.click_at_char_offset(1));
+    }
+
+    let popover = view.borrow().editor_lint.popover();
+    assert!(
+        popover.is_visible(),
+        "clicking a highlighted word must open the popover"
+    );
+    snapshot(&search, "editor-lint-popover");
+
+    let mut choices = Vec::new();
+    let mut stack = vec![popover.child().unwrap()];
+    while let Some(widget) = stack.pop() {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.has_css_class("writy-lint-choice")
+        {
+            choices.push(button.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(w) = child {
+            child = w.next_sibling();
+            stack.push(w);
+        }
+    }
+    assert!(choices.len() > 1, "Wether should offer multiple fixes");
+    let whether_btn = choices
+        .into_iter()
+        .find(|btn| {
+            let mut label_text = String::new();
+            let mut s = vec![btn.clone().upcast::<gtk::Widget>()];
+            while let Some(w) = s.pop() {
+                if let Some(l) = w.downcast_ref::<gtk::Label>() {
+                    label_text.push_str(&l.text());
+                }
+                let mut c = w.first_child();
+                while let Some(n) = c {
+                    c = n.next_sibling();
+                    s.push(n);
+                }
+            }
+            label_text.contains("Whether")
+        })
+        .expect("Whether choice button");
+    whether_btn.emit_clicked();
+    assert_eq!(
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false),
+        "Whether i know very unique things."
+    );
+    assert!(!popover.is_visible());
+    search.close();
 }
