@@ -1553,6 +1553,10 @@ fn native_bilingual_tabs_preserve_selection_without_translate_button() {
             description: "Alternative".into(),
             kind: SuggestionKind::Rewrite,
             provider: "fixture".into(),
+            alternatives: vec![],
+            rule: String::new(),
+            category: String::new(),
+            ignore_hash: None,
         })
         .collect();
     view.borrow().editor.buffer().set_text(" This is bad. ");

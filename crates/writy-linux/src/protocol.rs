@@ -24,6 +24,12 @@ pub enum Command {
         generation: u64,
         suggestion: Suggestion,
     },
+    HarperAddWord {
+        word: String,
+    },
+    HarperDisableRule {
+        rule: String,
+    },
     Copy,
     Pause,
     Prose,
@@ -55,6 +61,8 @@ impl Command {
             }
             Self::Lookup { text }
             | Self::Query { text, .. }
+            | Self::HarperAddWord { word: text }
+            | Self::HarperDisableRule { rule: text }
             | Self::Selection { text: Some(text) }
             | Self::Clipboard { text: Some(text) }
             | Self::Search { text: Some(text) } => Some(text),

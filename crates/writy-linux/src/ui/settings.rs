@@ -486,12 +486,18 @@ impl View {
             &pages,
             "English checks",
             "English checks (Harper)",
-            "Highlight spelling, grammar, and style improvements as you type in Writy.",
+            "Configure Harper's local spelling, grammar, and style rules across Writy and external apps.",
         );
         let (row, harper_enabled) = toggle_row(
             "Highlight mistakes and improvements",
-            "Underline spelling, grammar, and style suggestions inside the editor.",
+            "Underline spelling, grammar, and style suggestions while typing.",
             loaded.harper.enabled,
+        );
+        harper_page.append(&row);
+        let (row, harper_markdown) = toggle_row(
+            "Markdown-aware checking",
+            "Ignore inline code, fenced code blocks, and links while checking prose.",
+            loaded.harper.markdown,
         );
         harper_page.append(&row);
         harper_page.append(&label("English dialect", "writy-meta"));
@@ -514,24 +520,94 @@ impl View {
         ));
         let harper_dict = gtk::TextView::new();
         harper_dict.set_wrap_mode(gtk::WrapMode::WordChar);
-        harper_dict.set_size_request(-1, 80);
+        harper_dict.set_size_request(-1, 76);
         harper_dict
             .buffer()
             .set_text(&loaded.harper.dictionary.join("\n"));
         harper_dict.update_property(&[gtk::accessible::Property::Label("Personal dictionary")]);
         harper_page.append(&harper_dict);
-        harper_page.append(&label(
-            "Disabled Harper rules (one rule name per line; remove a line to re-enable)",
+
+        let clear_ignored = Rc::new(std::cell::Cell::new(false));
+        let ignored_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        ignored_row.add_css_class("writy-preference-row");
+        let ignored_label = label(
+            &format!(
+                "{} ignored lints remembered",
+                loaded.harper.ignored_hashes.len()
+            ),
             "writy-meta",
-        ));
-        let harper_rules = gtk::TextView::new();
-        harper_rules.set_wrap_mode(gtk::WrapMode::WordChar);
-        harper_rules.set_size_request(-1, 80);
-        harper_rules
-            .buffer()
-            .set_text(&loaded.harper.disabled_rules.join("\n"));
-        harper_rules.update_property(&[gtk::accessible::Property::Label("Disabled Harper rules")]);
-        harper_page.append(&harper_rules);
+        );
+        ignored_label.set_hexpand(true);
+        ignored_row.append(&ignored_label);
+        let clear_ignored_btn = components::action_button("Clear ignored lints");
+        clear_ignored_btn.set_sensitive(!loaded.harper.ignored_hashes.is_empty());
+        let clear_flag = clear_ignored.clone();
+        let ignored_lbl = ignored_label.clone();
+        clear_ignored_btn.connect_clicked(move |btn| {
+            clear_flag.set(true);
+            ignored_lbl.set_text("0 ignored lints remembered (save to apply)");
+            btn.set_sensitive(false);
+        });
+        ignored_row.append(&clear_ignored_btn);
+        harper_page.append(&ignored_row);
+
+        harper_page.append(&label("Harper rules", "writy-preference-title"));
+        let rule_search = gtk::SearchEntry::new();
+        rule_search.set_placeholder_text(Some("Filter Harper rules by name or description…"));
+        rule_search.update_property(&[gtk::accessible::Property::Label("Filter Harper rules")]);
+        harper_page.append(&rule_search);
+
+        let catalog = writy_core::linter::EnglishChecker::rule_catalog(&loaded.harper);
+        let rule_rows_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let mut rule_controls: Vec<(String, String, bool, gtk::Box, gtk::Switch)> = Vec::new();
+        for rule in catalog {
+            let (rrow, toggle) = toggle_row(&rule.name, &rule.description, rule.enabled);
+            rule_rows_box.append(&rrow);
+            rule_controls.push((
+                rule.name,
+                rule.description.to_lowercase(),
+                rule.default_enabled,
+                rrow,
+                toggle,
+            ));
+        }
+        let rule_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .min_content_height(220)
+            .child(&rule_rows_box)
+            .build();
+        rule_scroll.add_css_class("writy-rule-list");
+        harper_page.append(&rule_scroll);
+
+        let filter_controls: Vec<(String, String, gtk::Box)> = rule_controls
+            .iter()
+            .map(|(name, desc, _, row, _)| (name.to_lowercase(), desc.clone(), row.clone()))
+            .collect();
+        rule_search.connect_search_changed(move |entry| {
+            let query = entry.text().trim().to_lowercase();
+            for (name, desc, row) in &filter_controls {
+                let visible = query.is_empty() || name.contains(&query) || desc.contains(&query);
+                row.set_visible(visible);
+            }
+        });
+
+        let reset_rules_btn = components::action_button("Reset rules to defaults");
+        let reset_controls: Vec<(bool, gtk::Switch)> = rule_controls
+            .iter()
+            .map(|(_, _, default_enabled, _, toggle)| (*default_enabled, toggle.clone()))
+            .collect();
+        reset_rules_btn.connect_clicked(move |_| {
+            for (default_enabled, toggle) in &reset_controls {
+                toggle.set_active(*default_enabled);
+            }
+        });
+        harper_page.append(&reset_rules_btn);
+
+        let save_rule_controls: Vec<(String, bool, gtk::Switch)> = rule_controls
+            .into_iter()
+            .map(|(name, _, default_enabled, _, toggle)| (name, default_enabled, toggle))
+            .collect();
         let save = components::action_button("Save settings");
         save.add_css_class("suggested-action");
         let tx = self.tx.clone();
@@ -593,6 +669,7 @@ impl View {
                 })
                 .collect();
             c.harper.enabled = harper_enabled.is_active();
+            c.harper.markdown = harper_markdown.is_active();
             c.harper.dialect = writy_core::config::EnglishDialect::ALL
                 .get(dialect.selected() as usize)
                 .copied()
@@ -611,20 +688,16 @@ impl View {
                 .collect();
             c.harper.dictionary.sort();
             c.harper.dictionary.dedup();
-            c.harper.disabled_rules = harper_rules
-                .buffer()
-                .text(
-                    &harper_rules.buffer().start_iter(),
-                    &harper_rules.buffer().end_iter(),
-                    false,
-                )
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect();
-            c.harper.disabled_rules.sort();
-            c.harper.disabled_rules.dedup();
+            if clear_ignored.get() {
+                c.harper.clear_ignored_hashes();
+            }
+            c.harper.reset_rules();
+            for (name, default_enabled, toggle) in &save_rule_controls {
+                let active = toggle.is_active();
+                if active != *default_enabled {
+                    c.harper.set_rule_override(name, Some(active));
+                }
+            }
             match c.save() {
                 Ok(()) => {
                     *editor_rules.borrow_mut() = c.expander.clone();

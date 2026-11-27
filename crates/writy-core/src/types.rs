@@ -75,6 +75,14 @@ pub struct Suggestion {
     pub description: String,
     pub kind: SuggestionKind,
     pub provider: String,
+    #[serde(default)]
+    pub alternatives: Vec<String>,
+    #[serde(default)]
+    pub rule: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub ignore_hash: Option<u64>,
 }
 
 impl Suggestion {
@@ -89,7 +97,17 @@ impl Suggestion {
             && self.start <= self.end
             && self.end <= current.text.chars().count()
     }
-    pub fn replaced_text(&self) -> Option<String> {
+    pub fn choices(&self) -> Vec<&str> {
+        if self.alternatives.is_empty() {
+            vec![self.replacement.as_str()]
+        } else {
+            self.alternatives.iter().map(String::as_str).collect()
+        }
+    }
+    pub fn has_choice(&self, replacement: &str) -> bool {
+        self.replacement == replacement || self.alternatives.iter().any(|alt| alt == replacement)
+    }
+    pub fn replaced_with(&self, replacement: &str) -> Option<String> {
         if self.start > self.end || self.end > self.snapshot.text.chars().count() {
             return None;
         }
@@ -98,10 +116,13 @@ impl Suggestion {
                 .text
                 .chars()
                 .take(self.start)
-                .chain(self.replacement.chars())
+                .chain(replacement.chars())
                 .chain(self.snapshot.text.chars().skip(self.end))
                 .collect(),
         )
+    }
+    pub fn replaced_text(&self) -> Option<String> {
+        self.replaced_with(&self.replacement)
     }
 }
 
@@ -175,6 +196,10 @@ mod tests {
             description: "Alternative".into(),
             kind: SuggestionKind::Rewrite,
             provider: "fixture".into(),
+            alternatives: vec![],
+            rule: String::new(),
+            category: String::new(),
+            ignore_hash: None,
         };
         let other = Suggestion {
             replacement: "clearer".into(),

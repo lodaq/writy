@@ -73,6 +73,10 @@ mod tests {
             description: String::new(),
             kind: SuggestionKind::Rewrite,
             provider: "test".into(),
+            alternatives: vec![],
+            rule: String::new(),
+            category: String::new(),
+            ignore_hash: None,
         };
         assert_eq!(s.replaced_text().as_deref(), Some("هذا صحيح"));
         b.push(".");

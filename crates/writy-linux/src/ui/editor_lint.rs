@@ -31,6 +31,7 @@ pub(super) struct EditorFinding {
     pub provider: String,
     pub result_suggestion: Option<Suggestion>,
     pub result_generation: u64,
+    pub ignore_hash: Option<u64>,
 }
 
 impl EditorFinding {
@@ -259,6 +260,7 @@ impl EditorLintController {
                 provider: suggestion.provider.clone(),
                 result_suggestion: Some(suggestion.clone()),
                 result_generation: result.generation,
+                ignore_hash: suggestion.ignore_hash,
             });
         }
         inner.ai_findings = ai;
@@ -728,11 +730,22 @@ impl EditorLintController {
     }
 
     fn dismiss_finding(&self, finding: &EditorFinding) {
-        let (editor, popover) = {
+        let (editor, popover, updated) = {
             let mut inner = self.inner.borrow_mut();
             let key = finding.dismiss_key();
             if !inner.dismissed.contains(&key) {
                 inner.dismissed.push(key);
+            }
+            let mut updated = false;
+            if let Some(hash) = finding.ignore_hash {
+                let mut cfg = Config::load().unwrap_or_default();
+                cfg.harper = inner.harper.clone();
+                if cfg.harper.add_ignored_hash(hash) {
+                    let _ = cfg.save();
+                    inner.harper = cfg.harper;
+                    send(&inner.tx, Command::Reload);
+                    updated = true;
+                }
             }
             if let Some(suggestion) = &finding.result_suggestion {
                 send(
@@ -745,9 +758,12 @@ impl EditorLintController {
             }
             let plain = plain_buffer_text(&inner.editor.buffer());
             refresh_tags(&mut inner, &plain);
-            (inner.editor.clone(), inner.popover.clone())
+            (inner.editor.clone(), inner.popover.clone(), updated)
         };
         popover.popdown();
+        if updated {
+            self.check_now();
+        }
         editor.grab_focus();
     }
 
@@ -901,6 +917,7 @@ fn convert_findings(text: &str, findings: Vec<LintFinding>) -> Vec<EditorFinding
                 provider: f.provider,
                 result_suggestion: None,
                 result_generation: 0,
+                ignore_hash: Some(f.ignore_hash),
             }
         })
         .collect()
@@ -1015,7 +1032,7 @@ fn plain_offset_at_iter(buffer: &gtk::TextBuffer, target: &gtk::TextIter) -> usi
     count
 }
 
-fn format_message_markup(message: &str) -> String {
+pub(super) fn format_message_markup(message: &str) -> String {
     let mut out = String::new();
     let mut in_code = false;
     let mut current = String::new();

@@ -416,13 +416,93 @@ fn group_body(body: &gtk::Label, group: &SourceGroup) {
     }
 }
 
+fn kind_accent_class(kind: SuggestionKind) -> &'static str {
+    match kind {
+        SuggestionKind::Spelling => "writy-lint-spelling",
+        SuggestionKind::Grammar => "writy-lint-grammar",
+        SuggestionKind::Rewrite => "writy-lint-improvement",
+    }
+}
+
+fn kind_colors(kind: SuggestionKind) -> (&'static str, &'static str) {
+    match kind {
+        SuggestionKind::Spelling => ("#f43f5e", "#f43f5e24"),
+        SuggestionKind::Grammar => ("#a855f7", "#a855f724"),
+        SuggestionKind::Rewrite => ("#0ea5e9", "#0ea5e921"),
+    }
+}
+
+fn highlighted_preview_markup(
+    text: &str,
+    suggestions: &[writy_core::types::Suggestion],
+) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return None;
+    }
+    let scoped: Vec<&writy_core::types::Suggestion> = suggestions
+        .iter()
+        .filter(|s| {
+            s.start < s.end
+                && s.end <= len
+                && s.description != "Synonym; choose one that fits your meaning"
+                && !(s.start == 0 && s.end == len && s.rule.is_empty())
+        })
+        .collect();
+    if scoped.is_empty() {
+        return None;
+    }
+
+    let rank = |kind: SuggestionKind| match kind {
+        SuggestionKind::Spelling => 1u8,
+        SuggestionKind::Grammar => 2,
+        SuggestionKind::Rewrite => 3,
+    };
+
+    let mut per_char: Vec<Option<SuggestionKind>> = vec![None; len];
+    for s in scoped {
+        for slot in &mut per_char[s.start..s.end] {
+            let replace = match slot {
+                None => true,
+                Some(existing) => rank(s.kind) < rank(*existing),
+            };
+            if replace {
+                *slot = Some(s.kind);
+            }
+        }
+    }
+
+    let mut markup = String::new();
+    let mut i = 0;
+    while i < len {
+        let current_kind = per_char[i];
+        let mut j = i + 1;
+        while j < len && per_char[j] == current_kind {
+            j += 1;
+        }
+        let segment: String = chars[i..j].iter().collect();
+        let escaped = glib::markup_escape_text(&segment);
+        if let Some(kind) = current_kind {
+            let (ul, bg) = kind_colors(kind);
+            markup.push_str(&format!(
+                "<span underline=\"single\" underline_color=\"{ul}\" background=\"{bg}\">{escaped}</span>"
+            ));
+        } else {
+            markup.push_str(&escaped);
+        }
+        i = j;
+    }
+    Some(markup)
+}
+
 /// Search edits its own input; floating choices keep the verified external-edit path.
 pub(super) fn improvements(
     result: &Results,
     tx: &Commands,
     editor: Option<&gtk::TextView>,
 ) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     if editor.is_some() {
         card.add_css_class("writy-result-section");
         card.append(&label("Suggestions", "writy-title"));
@@ -436,30 +516,171 @@ pub(super) fn improvements(
             },
             "writy-meta",
         ));
+        return card;
     }
+
+    if editor.is_none()
+        && let Some(markup) = highlighted_preview_markup(&result.snapshot.text, &result.suggestions)
+    {
+        let preview_box = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        preview_box.add_css_class("writy-lint-hud-preview");
+        let preview = label("", "writy-body");
+        preview.set_markup(&markup);
+        preview.set_selectable(true);
+        preview.set_focusable(false);
+        preview_box.append(&preview);
+        card.append(&preview_box);
+    }
+
+    let snapshot_chars: Vec<char> = result.snapshot.text.chars().collect();
     for suggestion in &result.suggestions {
         let Some(replacement) = suggestion.replaced_text() else {
             continue;
         };
-        let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
-        let text = label(&replacement, "writy-body");
-        text.set_selectable(true);
-        row.append(&text);
-        row.append(&label(
-            &format!("{} · {}", suggestion.description, suggestion.provider),
-            "writy-meta",
-        ));
+        let original_excerpt: String =
+            if suggestion.start <= suggestion.end && suggestion.end <= snapshot_chars.len() {
+                snapshot_chars[suggestion.start..suggestion.end]
+                    .iter()
+                    .collect()
+            } else {
+                String::new()
+            };
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        if editor.is_none() {
+            row.add_css_class("writy-lint-hud-card");
+        }
+
+        if editor.is_none() {
+            let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let bar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            bar.add_css_class("writy-lint-bar");
+            bar.add_css_class(kind_accent_class(suggestion.kind));
+            head.append(&bar);
+
+            let cat = if !suggestion.category.is_empty() {
+                suggestion.category.as_str()
+            } else {
+                match suggestion.kind {
+                    SuggestionKind::Spelling => "Spelling",
+                    SuggestionKind::Grammar => "Grammar",
+                    SuggestionKind::Rewrite => "Improvement",
+                }
+            };
+            let cat_label = label(cat, "writy-lint-category");
+            cat_label.set_wrap(false);
+            head.append(&cat_label);
+
+            if !original_excerpt.is_empty() && original_excerpt != result.snapshot.text {
+                let excerpt = label(&format!("“{original_excerpt}”"), "writy-meta");
+                excerpt.set_wrap(false);
+                excerpt.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                excerpt.set_hexpand(true);
+                head.append(&excerpt);
+            } else {
+                let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                spacer.set_hexpand(true);
+                head.append(&spacer);
+            }
+
+            let provider = label(&suggestion.provider, "writy-meta");
+            provider.set_wrap(false);
+            head.append(&provider);
+            row.append(&head);
+
+            let desc = label("", "writy-lint-message");
+            desc.set_markup(&editor_lint::format_message_markup(&suggestion.description));
+            row.append(&desc);
+
+            let choices = suggestion.choices();
+            let verified = result.snapshot.confidence == writy_core::types::Confidence::Verified;
+            if !choices.is_empty() {
+                let choice_box = gtk::FlowBox::new();
+                choice_box.set_halign(gtk::Align::Start);
+                choice_box.set_selection_mode(gtk::SelectionMode::None);
+                choice_box.set_min_children_per_line(1);
+                choice_box.set_max_children_per_line(4);
+                choice_box.set_column_spacing(5);
+                choice_box.set_row_spacing(4);
+                for (idx, choice_text) in choices.iter().take(6).enumerate() {
+                    let caption = if choice_text.is_empty() {
+                        "Remove".to_owned()
+                    } else if choices.len() == 1 && verified {
+                        format!("Apply: {choice_text}")
+                    } else {
+                        (*choice_text).to_owned()
+                    };
+                    let btn = action_button(&caption);
+                    btn.add_css_class("writy-lint-hud-choice");
+                    if idx == 0 && verified {
+                        btn.add_css_class("suggested-action");
+                    }
+                    btn.set_focusable(false);
+                    if verified {
+                        btn.set_tooltip_text(Some("Apply this fix directly to the active app"));
+                        let tx = tx.clone();
+                        let generation = result.generation;
+                        let mut chosen = suggestion.clone();
+                        chosen.replacement = (*choice_text).to_owned();
+                        btn.connect_clicked(move |_| {
+                            send(
+                                &tx,
+                                Command::Apply {
+                                    generation,
+                                    suggestion: chosen.clone(),
+                                },
+                            );
+                        });
+                    } else {
+                        let fixed = suggestion.replaced_with(choice_text).unwrap_or_default();
+                        btn.set_tooltip_text(Some(
+                            "Direct edit unavailable for this app; click to copy fixed text",
+                        ));
+                        btn.connect_clicked(move |button| {
+                            if fixed.is_empty() {
+                                return;
+                            }
+                            clipboard(&fixed);
+                            let prev = button.label().map(|s| s.to_string()).unwrap_or_default();
+                            button.set_label("Copied ✓");
+                            let weak = button.downgrade();
+                            glib::timeout_add_local_once(Duration::from_millis(1200), move || {
+                                if let Some(b) = weak.upgrade() {
+                                    b.set_label(&prev);
+                                }
+                            });
+                        });
+                    }
+                    choice_box.insert(&btn, -1);
+                }
+                for i in 0..choices.len().min(6) {
+                    if let Some(child) = choice_box.child_at_index(i as i32) {
+                        child.set_focusable(false);
+                    }
+                }
+                row.append(&choice_box);
+            }
+        } else {
+            let text = label(&replacement, "writy-body");
+            text.set_selectable(true);
+            row.append(&text);
+            row.append(&label(
+                &format!("{} · {}", suggestion.description, suggestion.provider),
+                "writy-meta",
+            ));
+        }
+
         let actions = gtk::FlowBox::new();
         actions.set_halign(gtk::Align::Start);
         actions.set_selection_mode(gtk::SelectionMode::None);
         actions.set_min_children_per_line(1);
-        actions.set_max_children_per_line(3);
+        actions.set_max_children_per_line(5);
         actions.set_column_spacing(5);
         actions.set_row_spacing(4);
-        let apply = action_button("Apply");
-        apply.set_focusable(editor.is_some());
-        let source = suggestion.snapshot.text.clone();
+
         if let Some(editor) = editor {
+            let apply = action_button("Apply");
+            apply.set_focusable(true);
+            let source = suggestion.snapshot.text.clone();
             let editor = editor.clone();
             let start = suggestion.start;
             let end = suggestion.end;
@@ -481,34 +702,16 @@ pub(super) fn improvements(
                     button.set_tooltip_text(Some("Text changed; choose a current suggestion"));
                 }
             });
-        } else {
-            apply.set_sensitive(
-                result.snapshot.confidence == writy_core::types::Confidence::Verified,
-            );
-            apply.set_tooltip_text(Some(
-                "Apply to the verified text in your editor; otherwise use Copy",
-            ));
-            let tx = tx.clone();
-            let generation = result.generation;
-            let suggestion = suggestion.clone();
-            apply.connect_clicked(move |_| {
-                send(
-                    &tx,
-                    Command::Apply {
-                        generation,
-                        suggestion: suggestion.clone(),
-                    },
-                )
-            });
+            actions.insert(&apply, -1);
         }
-        actions.insert(&apply, -1);
-        actions.insert(
-            &copy_button(
-                Rc::new(RefCell::new(suggestion.replaced_text().unwrap_or_default())),
-                "Copy",
-            ),
-            -1,
+
+        let copy = copy_button(
+            Rc::new(RefCell::new(suggestion.replaced_text().unwrap_or_default())),
+            "Copy",
         );
+        copy.set_focusable(editor.is_some());
+        actions.insert(&copy, -1);
+
         let dismiss = action_button("Dismiss");
         dismiss.set_focusable(editor.is_some());
         let dismiss_tx = tx.clone();
@@ -528,11 +731,103 @@ pub(super) fn improvements(
             );
         });
         actions.insert(&dismiss, -1);
-        for index in 0..3 {
-            actions.child_at_index(index).unwrap().set_focusable(false);
+
+        if suggestion.rule == "SpellCheck"
+            && suggestion.kind == SuggestionKind::Spelling
+            && writy_core::types::is_single_word(&original_excerpt)
+        {
+            let add_dict = action_button("+ Dict");
+            add_dict.set_focusable(editor.is_some());
+            add_dict.set_tooltip_text(Some(&format!(
+                "Add \"{original_excerpt}\" to Harper dictionary"
+            )));
+            let dict_tx = tx.clone();
+            let word = original_excerpt.clone();
+            let row_weak = row.downgrade();
+            add_dict.connect_clicked(move |_| {
+                if let Some(r) = row_weak.upgrade() {
+                    r.set_visible(false);
+                }
+                send(&dict_tx, Command::HarperAddWord { word: word.clone() });
+            });
+            actions.insert(&add_dict, -1);
+        }
+
+        if !suggestion.rule.is_empty() {
+            let disable = action_button(&format!("Disable {}", suggestion.rule));
+            disable.add_css_class("flat");
+            disable.set_focusable(editor.is_some());
+            let rule_tx = tx.clone();
+            let rule = suggestion.rule.clone();
+            let row_weak = row.downgrade();
+            disable.connect_clicked(move |_| {
+                if let Some(r) = row_weak.upgrade() {
+                    r.set_visible(false);
+                }
+                send(&rule_tx, Command::HarperDisableRule { rule: rule.clone() });
+            });
+            actions.insert(&disable, -1);
+        }
+
+        for index in 0..5 {
+            if let Some(child) = actions.child_at_index(index) {
+                child.set_focusable(false);
+            }
         }
         row.append(&actions);
         card.append(&row);
     }
     card
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use writy_core::types::{Confidence, Language, Suggestion, TextSnapshot};
+
+    #[test]
+    fn hud_preview_highlights_mistakes_and_improvements() {
+        let text = "Wether i know very unique things.";
+        let snapshot = TextSnapshot {
+            source: "selection".into(),
+            focus_epoch: 1,
+            revision: 1,
+            language: Language::English,
+            text: text.into(),
+            confidence: Confidence::Projected,
+        };
+        let suggestions = vec![
+            Suggestion {
+                snapshot: snapshot.clone(),
+                start: 0,
+                end: 6,
+                replacement: "Whether".into(),
+                description: "Spelling".into(),
+                kind: SuggestionKind::Spelling,
+                provider: "Harper · local".into(),
+                alternatives: vec!["Whether".into(), "Weather".into()],
+                rule: "SpellCheck".into(),
+                category: "Spelling".into(),
+                ignore_hash: Some(1),
+            },
+            Suggestion {
+                snapshot,
+                start: 14,
+                end: 25,
+                replacement: "very special".into(),
+                description: "Style".into(),
+                kind: SuggestionKind::Rewrite,
+                provider: "Harper · local".into(),
+                alternatives: vec!["very special".into()],
+                rule: "VeryUnique".into(),
+                category: "Usage".into(),
+                ignore_hash: Some(2),
+            },
+        ];
+        let markup = highlighted_preview_markup(text, &suggestions).expect("preview markup");
+        assert!(markup.contains("#f43f5e"));
+        assert!(markup.contains("Wether"));
+        assert!(markup.contains("#0ea5e9"));
+        assert!(markup.contains("very unique"));
+    }
 }

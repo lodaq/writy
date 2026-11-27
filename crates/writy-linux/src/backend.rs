@@ -119,6 +119,10 @@ impl Generation {
                 description: "Synonym; choose one that fits your meaning".into(),
                 kind: SuggestionKind::Rewrite,
                 provider: source.to_string(),
+                alternatives: vec![],
+                rule: String::new(),
+                category: "Synonym".into(),
+                ignore_hash: None,
             });
         }
     }
@@ -420,10 +424,8 @@ impl State {
         self.generation.entries = self.dictionary.lookup(&snapshot.text).unwrap_or_default();
         self.generation.current = Some(snapshot.clone());
         self.generation.add_synonyms();
-        if !selection {
-            self.checker
-                .send_replace((self.config.harper.clone(), Some(snapshot.clone())));
-        }
+        self.checker
+            .send_replace((self.config.harper.clone(), Some(snapshot.clone())));
         self.generation.notice = if self.generation.entries.is_empty() {
             "No local entry. Install dictionaries in Settings.".into()
         } else {
@@ -483,8 +485,32 @@ impl State {
             Command::Reload=>match Config::load(){Ok(c)=>{self.config=c;self.checker.send_replace((self.config.harper.clone(), None));self.clear();self.capture_lease();},Err(_)=>return "invalid configuration".into()},
             Command::DismissSuggestion { generation, suggestion } => {
                 if generation > self.generation.id() || self.generation.current.as_ref().is_some_and(|current| current.text != suggestion.snapshot.text) { return "Suggestion is stale".into(); }
+                if let Some(hash) = suggestion.ignore_hash
+                    && self.config.harper.add_ignored_hash(hash)
+                {
+                    let _ = self.config.save();
+                    self.checker.send_replace((self.config.harper.clone(), None));
+                }
                 self.generation.dismissed.push(suggestion);
                 self.publish();
+            }
+            Command::HarperAddWord { word } => {
+                if self.config.harper.add_dictionary_word(&word) {
+                    let _ = self.config.save();
+                    self.generation.suggestions.retain(|s| s.provider != "Harper · local");
+                    let snapshot = self.generation.current.clone();
+                    self.checker.send_replace((self.config.harper.clone(), snapshot));
+                    self.publish();
+                }
+            }
+            Command::HarperDisableRule { rule } => {
+                if self.config.harper.disable_rule(&rule) {
+                    let _ = self.config.save();
+                    self.generation.suggestions.retain(|s| s.provider != "Harper · local");
+                    let snapshot = self.generation.current.clone();
+                    self.checker.send_replace((self.config.harper.clone(), snapshot));
+                    self.publish();
+                }
             }
             Command::Copy=>{
                 let text=self.generation.suggestions.iter().find(|s| !self.generation.is_dismissed(s)).and_then(Suggestion::replaced_text).or_else(||self.generation.translation.as_ref().map(|t|t.0.clone())).or_else(||self.generation.entries.iter().flat_map(|e|&e.senses).flat_map(|s|&s.translations).next().cloned());
@@ -494,11 +520,20 @@ impl State {
                 let choice = match cmd {
                     Command::Apply { generation, suggestion } => {
                         if generation != self.generation.id() { return "Suggestion is stale".into(); }
-                        self.generation.suggestions.iter().find(|offered| offered.same_edit(&suggestion) && !self.generation.is_dismissed(offered))
+                        self.generation.suggestions.iter().find(|offered| {
+                            offered.snapshot.same_context(&suggestion.snapshot)
+                                && offered.start == suggestion.start
+                                && offered.end == suggestion.end
+                                && offered.has_choice(&suggestion.replacement)
+                                && !self.generation.is_dismissed(offered)
+                        }).map(|offered| Suggestion {
+                            replacement: suggestion.replacement,
+                            ..offered.clone()
+                        })
                     },
-                    _ => self.generation.suggestions.iter().find(|s| !self.generation.is_dismissed(s)),
+                    _ => self.generation.suggestions.iter().find(|s| !self.generation.is_dismissed(s)).cloned(),
                 };
-                let Some(s)=choice.cloned()else{return "no suggestion".into();};
+                let Some(s)=choice else{return "no suggestion".into();};
                 let Some(current)=&self.generation.current else{return "no current context".into();};
                 if !s.matches(current)||current.confidence!=Confidence::Verified {return "Text range is unverified; use Copy".into();}
                 let Some((revision,field))=self.generation.anchor.clone()else{return "Text range is unverified; use Copy".into();};
@@ -889,7 +924,7 @@ async fn run(
                                 },
                                 Capability::Rewrite=>{
                                     let end=result.snapshot.text.chars().count();
-                                    s.generation.suggestions.insert(0,Suggestion{snapshot:s.generation.current.clone().unwrap_or(result.snapshot),start:0,end,replacement:result.text,description:"Natural phrasing".into(),kind:SuggestionKind::Rewrite,provider:result.provider});
+                                    s.generation.suggestions.insert(0,Suggestion{snapshot:s.generation.current.clone().unwrap_or(result.snapshot),start:0,end,replacement:result.text,description:"Natural phrasing".into(),kind:SuggestionKind::Rewrite,provider:result.provider,alternatives:vec![],rule:String::new(),category:"Improvement".into(),ignore_hash:None});
                                 }
                             } s.publish();
                         },
@@ -1322,7 +1357,11 @@ mod tests {
                             replacement: "edit".into(),
                             description: String::new(),
                             kind: SuggestionKind::Rewrite,
-                            provider: "fixture".into()
+                            provider: "fixture".into(),
+                            alternatives: vec![],
+                            rule: String::new(),
+                            category: String::new(),
+                            ignore_hash: None,
                         }
                     },
                     &events
@@ -1593,6 +1632,10 @@ mod tests {
             description: "fixture".into(),
             kind: SuggestionKind::Spelling,
             provider: "fixture".into(),
+            alternatives: vec![],
+            rule: String::new(),
+            category: String::new(),
+            ignore_hash: None,
         });
         generation.entries.push(LexicalEntry::default());
         generation.translation = Some(("مرحبا".into(), "fixture".into()));
@@ -1693,5 +1736,47 @@ mod tests {
         assert_eq!(generation.translation.as_ref().unwrap().0, "مرحبا");
         assert!(generation.anchor.is_none());
         assert!(generation.buffer.snapshot().text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn selection_triggers_harper_and_apply_accepts_alternative_choice() {
+        let (ui, _ui_events) = std::sync::mpsc::sync_channel(32);
+        let mut state = test_state(ui, Arc::new(AtomicU64::new(1)));
+        let (checker_tx, mut checker_rx) =
+            tokio::sync::watch::channel((HarperConfig::default(), None));
+        state.checker = checker_tx;
+        state.app = "org.example.Browser".into();
+        state.window = "browser".into();
+        state.config.model.ollama_url = "http://127.0.0.1:9".into();
+        let (events, _) = mpsc::channel(32);
+
+        state
+            .command(
+                Command::Selection {
+                    text: Some("Wether i know".into()),
+                },
+                &events,
+            )
+            .await;
+        assert!(checker_rx.has_changed().unwrap());
+        let (_, queued) = checker_rx.borrow_and_update().clone();
+        assert_eq!(queued.unwrap().text, "Wether i know");
+
+        // Verify Apply matches alternative choices without leaking unverified edits.
+        state.generation = with_results();
+        state.generation.suggestions[0].alternatives =
+            vec!["Hello".into(), "Hallo".into(), "Hull".into()];
+        let mut alt = state.generation.suggestions[0].clone();
+        alt.replacement = "Hallo".into();
+        let err = state
+            .command(
+                Command::Apply {
+                    generation: state.generation.id(),
+                    suggestion: alt,
+                },
+                &events,
+            )
+            .await;
+        assert_ne!(err, "no suggestion");
     }
 }

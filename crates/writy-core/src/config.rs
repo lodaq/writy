@@ -20,6 +20,7 @@ pub struct Config {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnglishDialect {
+    Auto,
     #[default]
     American,
     British,
@@ -28,7 +29,8 @@ pub enum EnglishDialect {
     Indian,
 }
 impl EnglishDialect {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::Auto,
         Self::American,
         Self::British,
         Self::Canadian,
@@ -37,6 +39,7 @@ impl EnglishDialect {
     ];
     pub fn label(self) -> &'static str {
         match self {
+            Self::Auto => "Auto-detect",
             Self::American => "American English",
             Self::British => "British English",
             Self::Canadian => "Canadian English",
@@ -50,16 +53,22 @@ impl EnglishDialect {
 pub struct HarperConfig {
     pub enabled: bool,
     pub dialect: EnglishDialect,
+    pub markdown: bool,
     pub disabled_rules: Vec<String>,
+    pub rule_overrides: BTreeMap<String, bool>,
     pub dictionary: Vec<String>,
+    pub ignored_hashes: Vec<u64>,
 }
 impl Default for HarperConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             dialect: EnglishDialect::American,
+            markdown: true,
             disabled_rules: Vec::new(),
+            rule_overrides: BTreeMap::new(),
             dictionary: Vec::new(),
+            ignored_hashes: Vec::new(),
         }
     }
 }
@@ -80,17 +89,66 @@ impl HarperConfig {
     }
     pub fn disable_rule(&mut self, rule: &str) -> bool {
         let rule = rule.trim();
-        if rule.is_empty() || self.disabled_rules.iter().any(|r| r == rule) {
+        if rule.is_empty() {
             return false;
         }
-        self.disabled_rules.push(rule.to_owned());
-        self.disabled_rules.sort();
-        true
+        let changed_override = self.rule_overrides.insert(rule.to_owned(), false) != Some(false);
+        let changed_list = if self.disabled_rules.iter().any(|r| r == rule) {
+            false
+        } else {
+            self.disabled_rules.push(rule.to_owned());
+            self.disabled_rules.sort();
+            true
+        };
+        changed_override || changed_list
     }
     pub fn enable_rule(&mut self, rule: &str) -> bool {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            return false;
+        }
+        let changed_override = self.rule_overrides.insert(rule.to_owned(), true) != Some(true);
         let before = self.disabled_rules.len();
         self.disabled_rules.retain(|r| r != rule);
-        self.disabled_rules.len() != before
+        changed_override || self.disabled_rules.len() != before
+    }
+    pub fn set_rule_override(&mut self, rule: &str, enabled: Option<bool>) {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            return;
+        }
+        match enabled {
+            Some(true) => {
+                self.rule_overrides.insert(rule.to_owned(), true);
+                self.disabled_rules.retain(|r| r != rule);
+            }
+            Some(false) => {
+                self.disable_rule(rule);
+            }
+            None => {
+                self.rule_overrides.remove(rule);
+                self.disabled_rules.retain(|r| r != rule);
+            }
+        }
+    }
+    pub fn reset_rules(&mut self) {
+        self.disabled_rules.clear();
+        self.rule_overrides.clear();
+    }
+    pub fn add_ignored_hash(&mut self, hash: u64) -> bool {
+        if self.ignored_hashes.contains(&hash) {
+            return false;
+        }
+        if self.ignored_hashes.len() >= 2000 {
+            self.ignored_hashes.remove(0);
+        }
+        self.ignored_hashes.push(hash);
+        true
+    }
+    pub fn clear_ignored_hashes(&mut self) -> bool {
+        let had = !self.ignored_hashes.is_empty();
+        self.ignored_hashes.clear();
+        had
     }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

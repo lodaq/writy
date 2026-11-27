@@ -766,6 +766,10 @@ impl ImprovementFeedback {
                     description: correction.reason,
                     kind: crate::types::SuggestionKind::Rewrite,
                     provider: provider.into(),
+                    alternatives: vec![],
+                    rule: String::new(),
+                    category: "Improvement".into(),
+                    ignore_hash: None,
                 })
             })
             .collect()
