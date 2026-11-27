@@ -70,7 +70,6 @@ should be distinguished from derivations.
 
 **Collocation**: Words frequently used together, such as *make a decision* or
 *قرار حاسم*.
-The user-facing section is named Common word combinations.
 
 **AI provider**: A configured local or remote source of model-generated help.
 Translation engines and dictionary sources retain their own names.

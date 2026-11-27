@@ -92,7 +92,7 @@ const CATEGORIES: [(&str, &str); 7] = [
     ("translation", "Translation"),
     ("suggestions", "Suggestions"),
     ("definition", "Definitions"),
-    ("collocations", "Common word combinations"),
+    ("collocations", "Collocations"),
     ("examples", "Examples"),
     ("synonyms", "Synonyms & antonyms"),
     ("word_family", "Word family"),

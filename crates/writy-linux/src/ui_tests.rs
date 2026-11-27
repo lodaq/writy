@@ -227,8 +227,8 @@ fn contrast(widget: &gtk::Widget, background: gdk::RGBA) -> f64 {
 #[ignore = "requires a graphical session; renders synthetic data only"]
 fn native_component_gallery() {
     gtk::init().unwrap();
-    let tab = components::tab_label("Common word combinations");
-    assert_eq!(tab.text(), "Common word combinations");
+    let tab = components::tab_label("Collocations");
+    assert_eq!(tab.text(), "Collocations");
     assert_eq!(tab.ellipsize(), gtk::pango::EllipsizeMode::None);
     let mut ui_contrast = BTreeMap::new();
     arabic_result_reading_layout();
