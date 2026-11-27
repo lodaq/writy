@@ -3,6 +3,7 @@ mod backend;
 mod input;
 mod ipc;
 mod protocol;
+mod tray;
 mod ui;
 
 use anyhow::{Context, Result, ensure};
@@ -129,6 +130,7 @@ fn run() -> Result<()> {
         if rt.block_on(ipc::send(&Command::Status)).is_ok() {
             anyhow::bail!("daemon is already running");
         }
+        let _tray = rt.spawn(tray::run());
         let exit = ui::run(config);
         ensure!(
             exit == gtk::glib::ExitCode::SUCCESS,

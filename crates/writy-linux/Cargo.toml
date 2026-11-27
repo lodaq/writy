@@ -20,3 +20,4 @@ gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
 gtk4-layer-shell = "0.8"
 xkbcommon = "0.9"
 libc = "0.2"
+ksni = "0.3.8"
